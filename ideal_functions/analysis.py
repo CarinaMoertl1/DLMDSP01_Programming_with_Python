@@ -16,8 +16,8 @@ MAPPING_FACTOR = np.sqrt(2)
 # training, ideal, and test CSV data from causing lookup errors.
 X_DECIMALS = 9
 
-# Number of closest competing candidates recorded alongside each selection 
-# Explains why an ideal function was chosen over another
+# Number of closest competing candidates recorded per selection.
+# These candidates help explain why an ideal function was chosen.
 ALTERNATIVES_RECORDED = 6
 
 @dataclass(frozen=True)
@@ -36,8 +36,9 @@ class Selection:
     ideal_column: str
     sum_squared_error: float
     max_deviation: float
-    # The closest competing candidates for this training column, sorted by ascending squared error
-    # Dashboard will explain why this function won and what it beat.
+
+    # Store the closest competing candidates so the dashboard can
+    # explain why the selected ideal function was chosen.
     alternatives: tuple[CandidateScore, ...] = ()
 
 
@@ -49,7 +50,7 @@ class IdealFunctionSelector:
         training: pd.DataFrame,
         ideal: pd.DataFrame,
     ) -> None:
-        """Prepare the training and ideal data for comparison."""
+        """Prepare training and ideal data for comparison."""
         self.training = (
             training
             .set_index("x")
@@ -74,13 +75,12 @@ class IdealFunctionSelector:
         self.selections: list[Selection] = []
 
     def select(self) -> list[Selection]:
-        """Select the four ideal functions with the lowest total squared error.
+        """Select distinct ideal functions with minimum total SSE.
 
-        Each training column is scored against every ideal column independently, 
-        then the training-to-ideal pairing is chosen using the Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) 
-        so that the four selected ideal functions are guaranteed to be distinct and, subject to that constraint,
-        jointly minimise the sum of squared errors across all four training functions. 
-        A per-column independent argmin cannot offer this guarantee: two training columns could otherwise both be closest to the same ideal function.
+        Each training function is compared with every ideal function.
+        The Hungarian algorithm then finds the combination with the
+        lowest total squared error while keeping the selected ideal
+        functions distinct.
         """
         aligned_ideal = self.ideal.loc[
             self.training.index
@@ -129,8 +129,9 @@ class IdealFunctionSelector:
                 ALTERNATIVES_RECORDED
             )
 
-            # The winner may fall outside the N lowest-error candidates if its best competitor was already assigned to another training column.
-            # Always include the winner to ensure the comparison reflects the actual selection.
+            # The selected function may not be among the closest
+            # candidates because another training function may have
+            # already claimed one of those candidates.
             if ideal_column not in top_candidates.index:
                 top_candidates = pd.concat([
                     top_candidates,
@@ -171,7 +172,7 @@ class IdealFunctionSelector:
         y: float,
         selection: Selection,
     ) -> float:
-        """Calculate the absolute deviation from a selected ideal function."""
+        """Calculate absolute deviation from a selected ideal function."""
         ideal_value = float(
             self.ideal.at[
                 x,
@@ -186,7 +187,7 @@ class IdealFunctionSelector:
         x: float,
         y: float,
     ) -> tuple[str | None, float | None]:
-        """Return the closest eligible function and its deviation."""
+        """Return the closest eligible ideal function and its deviation."""
         candidates: list[tuple[float, Selection]] = []
 
         for selection in self.selections:

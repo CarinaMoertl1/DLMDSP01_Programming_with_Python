@@ -154,7 +154,3 @@ def main() -> None:
             file=sys.stderr,
         )
         raise SystemExit(3) from exc
-
-
-if __name__ == "__main__":
-    main()

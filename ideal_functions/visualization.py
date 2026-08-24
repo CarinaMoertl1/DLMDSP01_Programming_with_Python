@@ -1271,7 +1271,6 @@ def create_visualization(
                     residual,
                     residual_key,
 
-                    sizing_mode="fixed",
                 ),
             )
         )
@@ -1461,7 +1460,6 @@ def create_visualization(
             overview,
             overview_key,
             overview_explanation,
-            sizing_mode="fixed",
         ),
     )
 
@@ -1481,10 +1479,7 @@ def create_visualization(
                 overview_panel,
                 *panels,
             ],
-            sizing_mode="fixed",
         ),
-
-        sizing_mode="fixed",
     )
 
     save(dashboard)
