@@ -24,9 +24,7 @@ class CsvDataSet(ABC):
         try:
             self.frame = pd.read_csv(self.path)
         except (OSError, pd.errors.ParserError) as exc:
-            raise DataSchemaError(
-                f"Cannot read {self.path}: {exc}"
-            ) from exc
+            raise DataSchemaError(f"Cannot read {self.path}: {exc}") from exc
 
         self._validate()
 
@@ -51,18 +49,13 @@ class CsvDataSet(ABC):
         details = []
 
         if missing:
-            details.append(
-                f"missing columns: {sorted(missing)}"
-            )
+            details.append(f"missing columns: {sorted(missing)}")
 
         if unexpected:
-            details.append(
-                f"unexpected columns: {sorted(unexpected)}"
-            )
+            details.append(f"unexpected columns: {sorted(unexpected)}")
 
         raise DataSchemaError(
-            f"{self.path} has an invalid schema "
-            f"({'; '.join(details)})"
+            f"{self.path} has an invalid schema " f"({'; '.join(details)})"
         )
 
     def _validate_numeric_values(self) -> None:
@@ -70,16 +63,12 @@ class CsvDataSet(ABC):
         try:
             self.frame = self.frame.astype(float)
         except (TypeError, ValueError) as exc:
-            raise DataSchemaError(
-                f"{self.path} contains non-numeric values"
-            ) from exc
+            raise DataSchemaError(f"{self.path} contains non-numeric values") from exc
 
     def _validate_finite_values(self) -> None:
         """Reject missing, infinite, or otherwise non-finite values."""
         if not np.isfinite(self.frame.to_numpy()).all():
-            raise DataSchemaError(
-                f"{self.path} contains missing or non-finite values"
-            )
+            raise DataSchemaError(f"{self.path} contains missing or non-finite values")
 
     def _validate_x_values(self) -> None:
         """Check whether duplicate x-values are allowed."""
@@ -87,33 +76,19 @@ class CsvDataSet(ABC):
             return
 
         if self.frame["x"].duplicated().any():
-            raise DataSchemaError(
-                f"{self.path} contains duplicate x values"
-            )
+            raise DataSchemaError(f"{self.path} contains duplicate x values")
 
 
 class TrainingDataSet(CsvDataSet):
     """The four measured training functions."""
 
-    required_columns = (
-        "x",
-        "y1",
-        "y2",
-        "y3",
-        "y4",
-    )
+    required_columns = ("x", "y1", "y2", "y3", "y4")
 
 
 class IdealDataSet(CsvDataSet):
     """The candidate ideal functions."""
 
-    required_columns = (
-        "x",
-        *(
-            f"y{number}"
-            for number in range(1, 51)
-        ),
-    )
+    required_columns = ("x", *(f"y{number}" for number in range(1, 51)))
 
 
 class TestDataSet(CsvDataSet):

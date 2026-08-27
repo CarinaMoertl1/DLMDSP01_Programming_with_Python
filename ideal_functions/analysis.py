@@ -45,29 +45,15 @@ class Selection:
 class IdealFunctionSelector:
     """Select ideal functions and map test observations."""
 
-    def __init__(
-        self,
-        training: pd.DataFrame,
-        ideal: pd.DataFrame,
-    ) -> None:
+    def __init__(self, training: pd.DataFrame, ideal: pd.DataFrame) -> None:
         """Prepare training and ideal data for comparison."""
-        self.training = (
-            training
-            .set_index("x")
-            .sort_index()
-        )
+        self.training = training.set_index("x").sort_index()
         self.training.index = self.training.index.round(X_DECIMALS)
 
-        self.ideal = (
-            ideal
-            .set_index("x")
-            .sort_index()
-        )
+        self.ideal = ideal.set_index("x").sort_index()
         self.ideal.index = self.ideal.index.round(X_DECIMALS)
 
-        if not self.training.index.isin(
-            self.ideal.index
-        ).all():
+        if not self.training.index.isin(self.ideal.index).all():
             raise DataConsistencyError(
                 "Every training x value must occur in ideal data"
             )
@@ -82,33 +68,19 @@ class IdealFunctionSelector:
         lowest total squared error while keeping the selected ideal
         functions distinct.
         """
-        aligned_ideal = self.ideal.loc[
-            self.training.index
-        ]
+        aligned_ideal = self.ideal.loc[self.training.index]
 
         training_columns = list(self.training.columns)
         ideal_columns = list(self.ideal.columns)
 
-        cost_matrix = np.empty(
-            (len(training_columns), len(ideal_columns))
-        )
+        cost_matrix = np.empty((len(training_columns), len(ideal_columns)))
 
         for row, training_column in enumerate(training_columns):
-            residuals = aligned_ideal.sub(
-                self.training[training_column],
-                axis=0,
-            )
+            residuals = aligned_ideal.sub(self.training[training_column], axis=0)
 
-            cost_matrix[row, :] = (
-                residuals
-                .pow(2)
-                .sum(axis=0)
-                .to_numpy()
-            )
+            cost_matrix[row, :] = residuals.pow(2).sum(axis=0).to_numpy()
 
-        row_indices, column_indices = linear_sum_assignment(
-            cost_matrix
-        )
+        row_indices, column_indices = linear_sum_assignment(cost_matrix)
 
         selected: list[Selection] = []
 
@@ -116,32 +88,25 @@ class IdealFunctionSelector:
             training_column = training_columns[row]
             ideal_column = ideal_columns[column]
 
-            residuals = aligned_ideal[ideal_column].sub(
-                self.training[training_column]
-            )
+            residuals = aligned_ideal[ideal_column].sub(self.training[training_column])
 
             candidate_scores = pd.Series(
-                cost_matrix[row, :],
-                index=ideal_columns,
+                cost_matrix[row, :], index=ideal_columns
             ).sort_values()
 
-            top_candidates = candidate_scores.head(
-                ALTERNATIVES_RECORDED
-            )
+            top_candidates = candidate_scores.head(ALTERNATIVES_RECORDED)
 
             # The selected function may not be among the closest
             # candidates because another training function may have
             # already claimed one of those candidates.
             if ideal_column not in top_candidates.index:
-                top_candidates = pd.concat([
-                    top_candidates,
-                    candidate_scores[[ideal_column]],
-                ]).sort_values()
+                top_candidates = pd.concat(
+                    [top_candidates, candidate_scores[[ideal_column]]]
+                ).sort_values()
 
             alternatives = tuple(
                 CandidateScore(
-                    ideal_column=str(candidate_column),
-                    sum_squared_error=float(score),
+                    ideal_column=str(candidate_column), sum_squared_error=float(score)
                 )
                 for candidate_column, score in top_candidates.items()
             )
@@ -150,14 +115,8 @@ class IdealFunctionSelector:
                 Selection(
                     training_column=training_column,
                     ideal_column=ideal_column,
-                    sum_squared_error=float(
-                        cost_matrix[row, column]
-                    ),
-                    max_deviation=float(
-                        residuals
-                        .abs()
-                        .max()
-                    ),
+                    sum_squared_error=float(cost_matrix[row, column]),
+                    max_deviation=float(residuals.abs().max()),
                     alternatives=alternatives,
                 )
             )
@@ -166,104 +125,55 @@ class IdealFunctionSelector:
 
         return selected
 
-    def _calculate_deviation(
-        self,
-        x: float,
-        y: float,
-        selection: Selection,
-    ) -> float:
+    def _calculate_deviation(self, x: float, y: float, selection: Selection) -> float:
         """Calculate absolute deviation from a selected ideal function."""
-        ideal_value = float(
-            self.ideal.at[
-                x,
-                selection.ideal_column,
-            ]
-        )
+        ideal_value = float(self.ideal.at[x, selection.ideal_column])
 
         return abs(y - ideal_value)
 
-    def _find_best_match(
-        self,
-        x: float,
-        y: float,
-    ) -> tuple[str | None, float | None]:
+    def _find_best_match(self, x: float, y: float) -> tuple[str | None, float | None]:
         """Return the closest eligible ideal function and its deviation."""
         candidates: list[tuple[float, Selection]] = []
 
         for selection in self.selections:
-            deviation = self._calculate_deviation(
-                x,
-                y,
-                selection,
-            )
+            deviation = self._calculate_deviation(x, y, selection)
 
-            limit = (
-                MAPPING_FACTOR
-                * selection.max_deviation
-            )
+            limit = MAPPING_FACTOR * selection.max_deviation
 
             if deviation <= limit:
-                candidates.append(
-                    (deviation, selection)
-                )
+                candidates.append((deviation, selection))
 
         if not candidates:
             return None, None
 
-        deviation, selection = min(
-            candidates,
-            key=lambda item: item[0],
-        )
+        deviation, selection = min(candidates, key=lambda item: item[0])
 
-        return (
-            selection.ideal_column,
-            deviation,
-        )
+        return (selection.ideal_column, deviation)
 
-    def map_test_data(
-        self,
-        test: pd.DataFrame,
-    ) -> pd.DataFrame:
+    def map_test_data(self, test: pd.DataFrame) -> pd.DataFrame:
         """Assign test observations to eligible ideal functions."""
         if not self.selections:
-            raise DataConsistencyError(
-                "Call select() before mapping test data"
-            )
+            raise DataConsistencyError("Call select() before mapping test data")
 
-        rows: list[
-            dict[str, float | str | None]
-        ] = []
+        rows: list[dict[str, float | str | None]] = []
 
         for point in test.itertuples(index=False):
             x = round(float(point.x), X_DECIMALS)
             y = float(point.y)
 
             if x not in self.ideal.index:
-                rows.append({
-                    "x": x,
-                    "y": y,
-                    "ideal_function": None,
-                    "deviation": None,
-                })
+                rows.append({"x": x, "y": y, "ideal_function": None, "deviation": None})
                 continue
 
-            ideal_function, deviation = (
-                self._find_best_match(x, y)
+            ideal_function, deviation = self._find_best_match(x, y)
+
+            rows.append(
+                {
+                    "x": x,
+                    "y": y,
+                    "ideal_function": ideal_function,
+                    "deviation": deviation,
+                }
             )
 
-            rows.append({
-                "x": x,
-                "y": y,
-                "ideal_function": ideal_function,
-                "deviation": deviation,
-            })
-
-        return pd.DataFrame(
-            rows,
-            columns=[
-                "x",
-                "y",
-                "ideal_function",
-                "deviation",
-            ],
-        )
+        return pd.DataFrame(rows, columns=["x", "y", "ideal_function", "deviation"])

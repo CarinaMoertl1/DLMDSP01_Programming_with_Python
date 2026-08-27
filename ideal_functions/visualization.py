@@ -21,7 +21,6 @@ from bokeh.models import (
 from bokeh.plotting import figure
 from bokeh.resources import CDN
 
-
 # ============================================================================
 # Design
 # ============================================================================
@@ -38,12 +37,7 @@ ASSIGNED_COLOR = "#16a34a"
 UNASSIGNED_COLOR = "#dc2626"
 THRESHOLD_COLOR = "#94a3b8"
 
-FUNCTION_COLORS = [
-    "#2563eb",
-    "#7c3aed",
-    "#0891b2",
-    "#ea580c",
-]
+FUNCTION_COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#ea580c"]
 
 
 # ============================================================================
@@ -51,9 +45,7 @@ FUNCTION_COLORS = [
 # ============================================================================
 
 
-def _prepare_indexed_frame(
-    frame: pd.DataFrame,
-) -> pd.DataFrame:
+def _prepare_indexed_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """
     Prepare a dataframe for x-based lookup.
 
@@ -63,27 +55,16 @@ def _prepare_indexed_frame(
     """
     result = frame.copy()
 
-    result["x"] = (
-        pd.to_numeric(result["x"], errors="coerce")
-        .astype(float)
-        .round(9)
-    )
+    result["x"] = pd.to_numeric(result["x"], errors="coerce").astype(float).round(9)
 
     result = result.dropna(subset=["x"])
 
-    result = (
-        result
-        .set_index("x")
-        .sort_index()
-    )
+    result = result.set_index("x").sort_index()
 
     return result
 
 
-def _safe_range(
-    values,
-    padding: float = 0.08,
-) -> tuple[float, float]:
+def _safe_range(values, padding: float = 0.08) -> tuple[float, float]:
     """Return a visually useful numeric range."""
     array = np.asarray(values, dtype=float)
 
@@ -136,10 +117,7 @@ def _clean_axis(plot: figure) -> None:
     plot.toolbar.logo = None
 
 
-def _add_legend_below(
-    plot: figure,
-    items: list[LegendItem],
-) -> None:
+def _add_legend_below(plot: figure, items: list[LegendItem]) -> None:
     """
     Place the legend below the corresponding plot.
 
@@ -162,57 +140,27 @@ def _add_legend_below(
 
 
 def _selected_test_points(
-    mappings: pd.DataFrame,
-    ideal: pd.DataFrame,
-    ideal_column: str,
+    mappings: pd.DataFrame, ideal: pd.DataFrame, ideal_column: str
 ) -> pd.DataFrame:
     """Return test points assigned to one selected ideal function."""
     if mappings.empty:
-        return pd.DataFrame(
-            columns=[
-                "x",
-                "y",
-                "predicted",
-                "deviation",
-            ]
-        )
+        return pd.DataFrame(columns=["x", "y", "predicted", "deviation"])
 
     result = mappings.copy()
 
-    result["x"] = (
-        pd.to_numeric(result["x"], errors="coerce")
-        .astype(float)
-        .round(9)
-    )
+    result["x"] = pd.to_numeric(result["x"], errors="coerce").astype(float).round(9)
 
-    result["y"] = pd.to_numeric(
-        result["y"],
-        errors="coerce",
-    )
+    result["y"] = pd.to_numeric(result["y"], errors="coerce")
 
     ideal_indexed = _prepare_indexed_frame(ideal)
 
-    result["predicted"] = result["x"].map(
-        ideal_indexed[ideal_column]
-    )
+    result["predicted"] = result["x"].map(ideal_indexed[ideal_column])
 
-    result["deviation"] = (
-        result["y"]
-        - result["predicted"]
-    ).abs()
+    result["deviation"] = (result["y"] - result["predicted"]).abs()
 
-    result = result[
-        result["ideal_function"] == ideal_column
-    ].copy()
+    result = result[result["ideal_function"] == ideal_column].copy()
 
-    return result[
-        [
-            "x",
-            "y",
-            "predicted",
-            "deviation",
-        ]
-    ].dropna(
+    return result[["x", "y", "predicted", "deviation"]].dropna(
         subset=["x", "y", "predicted"]
     )
 
@@ -243,33 +191,33 @@ def _create_function_plot(
     training_column = selection.training_column
     ideal_column = selection.ideal_column
 
-    function_color = FUNCTION_COLORS[
-        function_index % len(FUNCTION_COLORS)
-    ]
+    function_color = FUNCTION_COLORS[function_index % len(FUNCTION_COLORS)]
 
     # ------------------------------------------------------------------
     # Get the exact data for this function.
     # ------------------------------------------------------------------
 
-    ideal_data = pd.DataFrame({
-        "x": ideal_indexed.index.to_numpy(dtype=float),
-        "y": pd.to_numeric(
-            ideal_indexed[ideal_column],
-            errors="coerce",
-        ).to_numpy(dtype=float),
-    })
+    ideal_data = pd.DataFrame(
+        {
+            "x": ideal_indexed.index.to_numpy(dtype=float),
+            "y": pd.to_numeric(ideal_indexed[ideal_column], errors="coerce").to_numpy(
+                dtype=float
+            ),
+        }
+    )
 
     ideal_data = ideal_data.dropna()
 
     ideal_data = ideal_data.sort_values("x")
 
-    training_data = pd.DataFrame({
-        "x": training_indexed.index.to_numpy(dtype=float),
-        "y": pd.to_numeric(
-            training_indexed[training_column],
-            errors="coerce",
-        ).to_numpy(dtype=float),
-    })
+    training_data = pd.DataFrame(
+        {
+            "x": training_indexed.index.to_numpy(dtype=float),
+            "y": pd.to_numeric(
+                training_indexed[training_column], errors="coerce"
+            ).to_numpy(dtype=float),
+        }
+    )
 
     training_data = training_data.dropna()
 
@@ -279,65 +227,32 @@ def _create_function_plot(
     # Assigned test points.
     # ------------------------------------------------------------------
 
-    assigned = _selected_test_points(
-        mappings,
-        ideal,
-        ideal_column,
-    )
+    assigned = _selected_test_points(mappings, ideal, ideal_column)
 
     # ------------------------------------------------------------------
     # Unassigned test points that are inside this function's x-domain.
     # ------------------------------------------------------------------
 
-    unassigned = mappings[
-        mappings["ideal_function"].isna()
-    ].copy()
+    unassigned = mappings[mappings["ideal_function"].isna()].copy()
 
     if not unassigned.empty:
         unassigned["x"] = (
-            pd.to_numeric(
-                unassigned["x"],
-                errors="coerce",
-            )
-            .astype(float)
-            .round(9)
+            pd.to_numeric(unassigned["x"], errors="coerce").astype(float).round(9)
         )
 
-        unassigned["y"] = pd.to_numeric(
-            unassigned["y"],
-            errors="coerce",
-        )
+        unassigned["y"] = pd.to_numeric(unassigned["y"], errors="coerce")
 
-        unassigned["predicted"] = unassigned[
-            "x"
-        ].map(
-            ideal_indexed[ideal_column]
-        )
+        unassigned["predicted"] = unassigned["x"].map(ideal_indexed[ideal_column])
 
-        unassigned = unassigned.dropna(
-            subset=[
-                "x",
-                "y",
-                "predicted",
-            ]
-        )
+        unassigned = unassigned.dropna(subset=["x", "y", "predicted"])
     else:
-        unassigned = pd.DataFrame(
-            columns=[
-                "x",
-                "y",
-                "predicted",
-            ]
-        )
+        unassigned = pd.DataFrame(columns=["x", "y", "predicted"])
 
     # ------------------------------------------------------------------
     # Deviation threshold.
     # ------------------------------------------------------------------
 
-    threshold = (
-        np.sqrt(2)
-        * float(selection.max_deviation)
-    )
+    threshold = np.sqrt(2) * float(selection.max_deviation)
 
     ideal_x = ideal_data["x"].to_numpy()
     ideal_y = ideal_data["y"].to_numpy()
@@ -354,17 +269,10 @@ def _create_function_plot(
     # unassigned points can flatten the actual function visually.
     # ------------------------------------------------------------------
 
-    visible_values = [
-        ideal_y,
-        training_data["y"].to_numpy(),
-        upper_y,
-        lower_y,
-    ]
+    visible_values = [ideal_y, training_data["y"].to_numpy(), upper_y, lower_y]
 
     if not assigned.empty:
-        visible_values.append(
-            assigned["y"].to_numpy()
-        )
+        visible_values.append(assigned["y"].to_numpy())
 
     combined = np.concatenate(
         [
@@ -374,36 +282,22 @@ def _create_function_plot(
         ]
     )
 
-    y_min, y_max = _safe_range(
-        combined,
-        padding=0.10,
-    )
+    y_min, y_max = _safe_range(combined, padding=0.10)
 
-    x_min, x_max = _safe_range(
-        ideal_x,
-        padding=0.03,
-    )
+    x_min, x_max = _safe_range(ideal_x, padding=0.03)
 
     # ------------------------------------------------------------------
     # Figure.
     # ------------------------------------------------------------------
 
     plot = figure(
-        title=(
-            f"{training_column}  →  {ideal_column}"
-        ),
+        title=(f"{training_column}  →  {ideal_column}"),
         width=760,
         height=440,
         x_axis_label="x",
         y_axis_label="Function value",
-        x_range=Range1d(
-            x_min,
-            x_max,
-        ),
-        y_range=Range1d(
-            y_min,
-            y_max,
-        ),
+        x_range=Range1d(x_min, x_max),
+        y_range=Range1d(y_min, y_max),
         toolbar_location="above",
         sizing_mode="stretch_width",
     )
@@ -414,9 +308,7 @@ def _create_function_plot(
     # Ideal function.
     # ------------------------------------------------------------------
 
-    ideal_source = ColumnDataSource(
-        ideal_data
-    )
+    ideal_source = ColumnDataSource(ideal_data)
 
     ideal_renderer = plot.line(
         x="x",
@@ -431,9 +323,7 @@ def _create_function_plot(
     # Training observations.
     # ------------------------------------------------------------------
 
-    training_source = ColumnDataSource(
-        training_data
-    )
+    training_source = ColumnDataSource(training_data)
 
     training_renderer = plot.scatter(
         x="x",
@@ -475,9 +365,7 @@ def _create_function_plot(
     assigned_renderer = None
 
     if not assigned.empty:
-        assigned_source = ColumnDataSource(
-            assigned
-        )
+        assigned_source = ColumnDataSource(assigned)
 
         assigned_renderer = plot.scatter(
             x="x",
@@ -492,26 +380,12 @@ def _create_function_plot(
 
         plot.add_tools(
             HoverTool(
-                renderers=[
-                    assigned_renderer
-                ],
+                renderers=[assigned_renderer],
                 tooltips=[
-                    (
-                        "x",
-                        "@x{0.000000}",
-                    ),
-                    (
-                        "Actual",
-                        "@y{0.000000}",
-                    ),
-                    (
-                        "Predicted",
-                        "@predicted{0.000000}",
-                    ),
-                    (
-                        "Deviation",
-                        "@deviation{0.000000}",
-                    ),
+                    ("x", "@x{0.000000}"),
+                    ("Actual", "@y{0.000000}"),
+                    ("Predicted", "@predicted{0.000000}"),
+                    ("Deviation", "@deviation{0.000000}"),
                 ],
             )
         )
@@ -523,15 +397,7 @@ def _create_function_plot(
     unassigned_renderer = None
 
     if not unassigned.empty:
-        unassigned_source = ColumnDataSource(
-            unassigned[
-                [
-                    "x",
-                    "y",
-                    "predicted",
-                ]
-            ]
-        )
+        unassigned_source = ColumnDataSource(unassigned[["x", "y", "predicted"]])
 
         unassigned_renderer = plot.scatter(
             x="x",
@@ -546,22 +412,11 @@ def _create_function_plot(
 
         plot.add_tools(
             HoverTool(
-                renderers=[
-                    unassigned_renderer
-                ],
+                renderers=[unassigned_renderer],
                 tooltips=[
-                    (
-                        "x",
-                        "@x{0.000000}",
-                    ),
-                    (
-                        "Actual",
-                        "@y{0.000000}",
-                    ),
-                    (
-                        "Predicted",
-                        "@predicted{0.000000}",
-                    ),
+                    ("x", "@x{0.000000}"),
+                    ("Actual", "@y{0.000000}"),
+                    ("Predicted", "@predicted{0.000000}"),
                 ],
             )
         )
@@ -575,9 +430,7 @@ def _create_function_plot(
         y=y_max,
         x_units="data",
         y_units="data",
-        text=(
-            f"Allowed deviation: ±{threshold:.4f}"
-        ),
+        text=(f"Allowed deviation: ±{threshold:.4f}"),
         text_color=MUTED_TEXT,
         text_font_size="10px",
         background_fill_color=CARD_BACKGROUND,
@@ -587,9 +440,7 @@ def _create_function_plot(
         padding=7,
     )
 
-    plot.add_layout(
-        threshold_label
-    )
+    plot.add_layout(threshold_label)
 
     # ------------------------------------------------------------------
     # Legend BELOW the diagram.
@@ -598,48 +449,25 @@ def _create_function_plot(
     legend_items = [
         LegendItem(
             label=f"Selected ideal function ({ideal_column})",
-            renderers=[
-                ideal_renderer
-            ],
+            renderers=[ideal_renderer],
         ),
         LegendItem(
-            label=f"Training data ({training_column})",
-            renderers=[
-                training_renderer
-            ],
+            label=f"Training data ({training_column})", renderers=[training_renderer]
         ),
-        LegendItem(
-            label="Allowed deviation",
-            renderers=[
-                upper_renderer
-            ],
-        ),
+        LegendItem(label="Allowed deviation", renderers=[upper_renderer]),
     ]
 
     if assigned_renderer is not None:
         legend_items.append(
-            LegendItem(
-                label="Assigned test points",
-                renderers=[
-                    assigned_renderer
-                ],
-            )
+            LegendItem(label="Assigned test points", renderers=[assigned_renderer])
         )
 
     if unassigned_renderer is not None:
         legend_items.append(
-            LegendItem(
-                label="Unassigned test points",
-                renderers=[
-                    unassigned_renderer
-                ],
-            )
+            LegendItem(label="Unassigned test points", renderers=[unassigned_renderer])
         )
 
-    _add_legend_below(
-        plot,
-        legend_items,
-    )
+    _add_legend_below(plot, legend_items)
 
     return plot
 
@@ -650,9 +478,7 @@ def _create_function_plot(
 
 
 def _create_prediction_plot(
-    mappings: pd.DataFrame,
-    ideal: pd.DataFrame,
-    selections: list,
+    mappings: pd.DataFrame, ideal: pd.DataFrame, selections: list
 ) -> figure:
     """
     Create a clear predicted-versus-actual visualization.
@@ -671,36 +497,15 @@ def _create_prediction_plot(
     prediction_frames = []
 
     for selection in selections:
-        assigned = _selected_test_points(
-            mappings,
-            ideal,
-            selection.ideal_column,
-        )
+        assigned = _selected_test_points(mappings, ideal, selection.ideal_column)
 
         if not assigned.empty:
-            prediction_frames.append(
-                assigned[
-                    [
-                        "predicted",
-                        "y",
-                        "deviation",
-                    ]
-                ]
-            )
+            prediction_frames.append(assigned[["predicted", "y", "deviation"]])
 
     if prediction_frames:
-        data = pd.concat(
-            prediction_frames,
-            ignore_index=True,
-        )
+        data = pd.concat(prediction_frames, ignore_index=True)
     else:
-        data = pd.DataFrame(
-            columns=[
-                "predicted",
-                "y",
-                "deviation",
-            ]
-        )
+        data = pd.DataFrame(columns=["predicted", "y", "deviation"])
 
     data = data.dropna()
 
@@ -712,25 +517,14 @@ def _create_prediction_plot(
         minimum = 0.0
         maximum = 1.0
     else:
-        minimum = min(
-            data["predicted"].min(),
-            data["y"].min(),
-        )
+        minimum = min(data["predicted"].min(), data["y"].min())
 
-        maximum = max(
-            data["predicted"].max(),
-            data["y"].max(),
-        )
+        maximum = max(data["predicted"].max(), data["y"].max())
 
     if minimum == maximum:
-        margin = max(
-            abs(minimum) * 0.1,
-            1.0,
-        )
+        margin = max(abs(minimum) * 0.1, 1.0)
     else:
-        margin = (
-            maximum - minimum
-        ) * 0.08
+        margin = (maximum - minimum) * 0.08
 
     lower = minimum - margin
     upper = maximum + margin
@@ -741,14 +535,8 @@ def _create_prediction_plot(
         height=470,
         x_axis_label="Predicted value",
         y_axis_label="Actual value",
-        x_range=Range1d(
-            lower,
-            upper,
-        ),
-        y_range=Range1d(
-            lower,
-            upper,
-        ),
+        x_range=Range1d(lower, upper),
+        y_range=Range1d(lower, upper),
         toolbar_location="above",
         sizing_mode="stretch_width",
     )
@@ -773,9 +561,7 @@ def _create_prediction_plot(
     # ------------------------------------------------------------------
 
     if not data.empty:
-        source = ColumnDataSource(
-            data
-        )
+        source = ColumnDataSource(data)
 
         scatter = plot.scatter(
             x="predicted",
@@ -790,22 +576,11 @@ def _create_prediction_plot(
 
         plot.add_tools(
             HoverTool(
-                renderers=[
-                    scatter
-                ],
+                renderers=[scatter],
                 tooltips=[
-                    (
-                        "Predicted",
-                        "@predicted{0.000000}",
-                    ),
-                    (
-                        "Actual",
-                        "@y{0.000000}",
-                    ),
-                    (
-                        "Absolute deviation",
-                        "@deviation{0.000000}",
-                    ),
+                    ("Predicted", "@predicted{0.000000}"),
+                    ("Actual", "@y{0.000000}"),
+                    ("Absolute deviation", "@deviation{0.000000}"),
                 ],
             )
         )
@@ -816,48 +591,28 @@ def _create_prediction_plot(
     # Legend below.
     # ------------------------------------------------------------------
 
-    legend_items = [
-        LegendItem(
-            label="Perfect prediction",
-            renderers=[
-                perfect_line
-            ],
-        )
-    ]
+    legend_items = [LegendItem(label="Perfect prediction", renderers=[perfect_line])]
 
     if scatter is not None:
         legend_items.append(
-            LegendItem(
-                label="Assigned test observations",
-                renderers=[
-                    scatter
-                ],
-            )
+            LegendItem(label="Assigned test observations", renderers=[scatter])
         )
 
-    _add_legend_below(
-        plot,
-        legend_items,
-    )
+    _add_legend_below(plot, legend_items)
 
     # ------------------------------------------------------------------
     # Explanation.
     # ------------------------------------------------------------------
 
     if not data.empty:
-        mean_deviation = float(
-            data["deviation"].mean()
-        )
+        mean_deviation = float(data["deviation"].mean())
 
         label = Label(
             x=lower,
             y=upper,
             x_units="data",
             y_units="data",
-            text=(
-                f"Mean absolute deviation: "
-                f"{mean_deviation:.4f}"
-            ),
+            text=(f"Mean absolute deviation: " f"{mean_deviation:.4f}"),
             text_color=MUTED_TEXT,
             text_font_size="10px",
             background_fill_color=CARD_BACKGROUND,
@@ -878,23 +633,13 @@ def _create_prediction_plot(
 
 
 def _create_summary_card(
-    total_points: int,
-    assigned_points: int,
-    unassigned_points: int,
-    selections: list,
+    total_points: int, assigned_points: int, unassigned_points: int, selections: list
 ) -> str:
     """Create the dashboard summary cards."""
 
-    assignment_rate = (
-        assigned_points
-        / total_points
-        * 100
-        if total_points
-        else 0.0
-    )
+    assignment_rate = assigned_points / total_points * 100 if total_points else 0.0
 
-    function_items = "".join(
-        f"""
+    function_items = "".join(f"""
         <div class="function-item">
             <span class="function-training">
                 {selection.training_column}
@@ -908,9 +653,7 @@ def _create_summary_card(
                 {selection.ideal_column}
             </span>
         </div>
-        """
-        for selection in selections
-    )
+        """ for selection in selections)
 
     return f"""
     <section class="summary-grid">
@@ -976,17 +719,13 @@ def _create_summary_card(
 # ============================================================================
 
 
-def _create_alternatives_card(
-    selection,
-    accent_color: str,
-) -> str:
+def _create_alternatives_card(selection, accent_color: str) -> str:
     """Create a small table of the closest competing ideal functions.
 
     The selected ideal function is highlighted so the reader can see
     at a glance how close the runner-up candidates were.
     """
-    rows = "".join(
-        f"""
+    rows = "".join(f"""
         <tr class="{
             'alt-row-selected'
             if candidate.ideal_column == selection.ideal_column
@@ -995,9 +734,7 @@ def _create_alternatives_card(
             <td>{candidate.ideal_column}</td>
             <td>{candidate.sum_squared_error:.6g}</td>
         </tr>
-        """
-        for candidate in selection.alternatives
-    )
+        """ for candidate in selection.alternatives)
 
     return f"""
     <div class="alt-card" style="border-top-color: {accent_color};">
@@ -1033,14 +770,11 @@ def _create_alternatives_card(
     """
 
 
-def _create_alternatives_section(
-    selections: list,
-) -> str:
+def _create_alternatives_section(selections: list) -> str:
     """Create the section listing competing candidates per selection."""
     cards = "".join(
         _create_alternatives_card(
-            selection,
-            FUNCTION_COLORS[index % len(FUNCTION_COLORS)],
+            selection, FUNCTION_COLORS[index % len(FUNCTION_COLORS)]
         )
         for index, selection in enumerate(selections)
     )
@@ -1089,23 +823,13 @@ def create_visualization(
 
     output_path = Path(output_path)
 
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     total_points = len(mappings)
 
-    assigned_points = int(
-        mappings[
-            "ideal_function"
-        ].notna().sum()
-    )
+    assigned_points = int(mappings["ideal_function"].notna().sum())
 
-    unassigned_points = (
-        total_points
-        - assigned_points
-    )
+    unassigned_points = total_points - assigned_points
 
     # ------------------------------------------------------------------
     # Create the four independent function plots.
@@ -1113,17 +837,9 @@ def create_visualization(
 
     function_plots = []
 
-    for index, selection in enumerate(
-        selections
-    ):
+    for index, selection in enumerate(selections):
         function_plots.append(
-            _create_function_plot(
-                training,
-                ideal,
-                mappings,
-                selection,
-                index,
-            )
+            _create_function_plot(training, ideal, mappings, selection, index)
         )
 
     # ------------------------------------------------------------------
@@ -1136,61 +852,35 @@ def create_visualization(
 
     if len(function_plots) >= 4:
 
-        top_row = row(
-            function_plots[0],
-            function_plots[1],
-            sizing_mode="stretch_width",
-        )
+        top_row = row(function_plots[0], function_plots[1], sizing_mode="stretch_width")
 
         bottom_row = row(
-            function_plots[2],
-            function_plots[3],
-            sizing_mode="stretch_width",
+            function_plots[2], function_plots[3], sizing_mode="stretch_width"
         )
 
         function_dashboard = column(
-            top_row,
-            Spacer(height=55),
-            bottom_row,
-            sizing_mode="stretch_width",
+            top_row, Spacer(height=55), bottom_row, sizing_mode="stretch_width"
         )
 
     elif len(function_plots) == 3:
 
-        top_row = row(
-            function_plots[0],
-            function_plots[1],
-            sizing_mode="stretch_width",
-        )
+        top_row = row(function_plots[0], function_plots[1], sizing_mode="stretch_width")
 
-        bottom_row = row(
-            function_plots[2],
-            sizing_mode="stretch_width",
-        )
+        bottom_row = row(function_plots[2], sizing_mode="stretch_width")
 
         function_dashboard = column(
-            top_row,
-            Spacer(height=55),
-            bottom_row,
-            sizing_mode="stretch_width",
+            top_row, Spacer(height=55), bottom_row, sizing_mode="stretch_width"
         )
 
     else:
 
-        function_dashboard = column(
-            *function_plots,
-            sizing_mode="stretch_width",
-        )
+        function_dashboard = column(*function_plots, sizing_mode="stretch_width")
 
     # ------------------------------------------------------------------
     # Prediction plot.
     # ------------------------------------------------------------------
 
-    prediction_plot = _create_prediction_plot(
-        mappings,
-        ideal,
-        selections,
-    )
+    prediction_plot = _create_prediction_plot(mappings, ideal, selections)
 
     # ------------------------------------------------------------------
     # Complete Bokeh dashboard.
@@ -1203,29 +893,15 @@ def create_visualization(
         sizing_mode="stretch_width",
     )
 
-    dashboard_html = file_html(
-        dashboard,
-        CDN,
-        "Ideal Function Analysis",
-    )
+    dashboard_html = file_html(dashboard, CDN, "Ideal Function Analysis")
 
     # Extract Bokeh body.
-    body_start = dashboard_html.find(
-        "<body>"
-    )
+    body_start = dashboard_html.find("<body>")
 
-    body_end = dashboard_html.find(
-        "</body>"
-    )
+    body_end = dashboard_html.find("</body>")
 
-    if (
-        body_start != -1
-        and body_end != -1
-    ):
-        bokeh_body = dashboard_html[
-            body_start + len("<body>"):
-            body_end
-        ]
+    if body_start != -1 and body_end != -1:
+        bokeh_body = dashboard_html[body_start + len("<body>") : body_end]
     else:
         bokeh_body = dashboard_html
 
@@ -1233,17 +909,7 @@ def create_visualization(
     head_content = ""
 
     if "<head>" in dashboard_html:
-        head_content = (
-            dashboard_html
-            .split(
-                "<head>",
-                1,
-            )[1]
-            .split(
-                "</head>",
-                1,
-            )[0]
-        )
+        head_content = dashboard_html.split("<head>", 1)[1].split("</head>", 1)[0]
 
     # ------------------------------------------------------------------
     # Modern page styling.
@@ -1738,18 +1404,13 @@ def create_visualization(
     </div>
     """
 
-    function_section = function_section.replace(
-        "__FUNCTION_DASHBOARD__",
-        bokeh_body,
-    )
+    function_section = function_section.replace("__FUNCTION_DASHBOARD__", bokeh_body)
 
     # ------------------------------------------------------------------
     # Closest competing candidates.
     # ------------------------------------------------------------------
 
-    alternatives_section = _create_alternatives_section(
-        selections
-    )
+    alternatives_section = _create_alternatives_section(selections)
 
     # ------------------------------------------------------------------
     # Prediction section.
@@ -1881,7 +1542,4 @@ def create_visualization(
     </html>
     """
 
-    output_path.write_text(
-        complete_page,
-        encoding="utf-8",
-    )
+    output_path.write_text(complete_page, encoding="utf-8")
