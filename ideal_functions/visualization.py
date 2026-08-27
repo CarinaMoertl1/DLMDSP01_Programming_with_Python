@@ -972,6 +972,108 @@ def _create_summary_card(
 
 
 # ============================================================================
+# Closest competing candidates
+# ============================================================================
+
+
+def _create_alternatives_card(
+    selection,
+    accent_color: str,
+) -> str:
+    """Create a small table of the closest competing ideal functions.
+
+    The selected ideal function is highlighted so the reader can see
+    at a glance how close the runner-up candidates were.
+    """
+    rows = "".join(
+        f"""
+        <tr class="{
+            'alt-row-selected'
+            if candidate.ideal_column == selection.ideal_column
+            else ''
+        }">
+            <td>{candidate.ideal_column}</td>
+            <td>{candidate.sum_squared_error:.6g}</td>
+        </tr>
+        """
+        for candidate in selection.alternatives
+    )
+
+    return f"""
+    <div class="alt-card" style="border-top-color: {accent_color};">
+
+        <div class="alt-card-title">
+            <span class="alt-training">
+                {selection.training_column}
+            </span>
+
+            <span class="alt-arrow">
+                →
+            </span>
+
+            <span class="alt-ideal" style="color: {accent_color};">
+                {selection.ideal_column}
+            </span>
+        </div>
+
+        <table class="alt-table">
+            <thead>
+                <tr>
+                    <th>Candidate</th>
+                    <th>Sum of squared errors</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+
+    </div>
+    """
+
+
+def _create_alternatives_section(
+    selections: list,
+) -> str:
+    """Create the section listing competing candidates per selection."""
+    cards = "".join(
+        _create_alternatives_card(
+            selection,
+            FUNCTION_COLORS[index % len(FUNCTION_COLORS)],
+        )
+        for index, selection in enumerate(selections)
+    )
+
+    return f"""
+    <div class="section">
+
+        <div class="section-header">
+
+            <h2 class="section-title">
+                Closest competing candidates
+            </h2>
+
+            <div class="section-description">
+                For each selected ideal function, the table lists the
+                ideal functions with the lowest sum of squared errors
+                against the corresponding training function. The
+                selected function is highlighted; the remaining rows
+                show how close the next-best candidates were and give
+                additional evidence for the selection.
+            </div>
+
+        </div>
+
+        <div class="alt-grid">
+            {cards}
+        </div>
+
+    </div>
+    """
+
+
+# ============================================================================
 # Main visualization
 # ============================================================================
 
@@ -1343,6 +1445,98 @@ def create_visualization(
             color: #2563eb;
         }
 
+        .alt-grid {
+            display: grid;
+
+            grid-template-columns:
+                repeat(
+                    2,
+                    minmax(0, 1fr)
+                );
+
+            gap: 16px;
+        }
+
+        .alt-card {
+            padding: 18px 20px;
+
+            background: var(--card);
+
+            border:
+                1px solid
+                var(--border);
+
+            border-top: 3px solid #2563eb;
+
+            border-radius: 14px;
+
+            box-shadow:
+                0 2px 8px
+                rgba(
+                    15,
+                    23,
+                    42,
+                    0.04
+                );
+        }
+
+        .alt-card-title {
+            margin-bottom: 12px;
+
+            font-size: 14px;
+        }
+
+        .alt-training {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .alt-arrow {
+            margin: 0 6px;
+            color: #94a3b8;
+        }
+
+        .alt-ideal {
+            font-weight: 700;
+        }
+
+        .alt-table {
+            width: 100%;
+
+            border-collapse: collapse;
+
+            font-size: 12px;
+        }
+
+        .alt-table th {
+            padding: 6px 8px;
+
+            text-align: left;
+
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+
+            color: var(--muted);
+
+            border-bottom: 1px solid var(--border);
+        }
+
+        .alt-table td {
+            padding: 6px 8px;
+
+            color: var(--text);
+
+            border-bottom: 1px solid var(--border);
+        }
+
+        .alt-row-selected td {
+            font-weight: 700;
+            color: var(--green);
+            background: #f0fdf4;
+        }
+
         .section {
             margin-bottom: 38px;
         }
@@ -1472,6 +1666,10 @@ def create_visualization(
                 grid-template-columns: 1fr;
             }
 
+            .alt-grid {
+                grid-template-columns: 1fr;
+            }
+
             h1 {
                 font-size: 29px;
             }
@@ -1543,6 +1741,14 @@ def create_visualization(
     function_section = function_section.replace(
         "__FUNCTION_DASHBOARD__",
         bokeh_body,
+    )
+
+    # ------------------------------------------------------------------
+    # Closest competing candidates.
+    # ------------------------------------------------------------------
+
+    alternatives_section = _create_alternatives_section(
+        selections
     )
 
     # ------------------------------------------------------------------
@@ -1659,6 +1865,8 @@ def create_visualization(
             )}
 
             {function_section}
+
+            {alternatives_section}
 
             {prediction_explanation}
 
