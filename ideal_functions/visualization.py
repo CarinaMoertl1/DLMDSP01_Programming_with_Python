@@ -1,1485 +1,1679 @@
-"""Modern Bokeh visualization dashboard for fitted functions and test assignments."""
+"""Interactive visualization for ideal-function selection and test mapping."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from bokeh.layouts import column
+
+from bokeh.embed import file_html
+from bokeh.layouts import column, row, Spacer
 from bokeh.models import (
-    BoxAnnotation,
     ColumnDataSource,
-    Div,
-    FactorRange,
     HoverTool,
     Label,
+    Legend,
+    LegendItem,
+    Range1d,
     Span,
-    TabPanel,
-    Tabs,
 )
-from bokeh.plotting import figure, output_file, save
-
-from .analysis import Selection
-
-
-# ============================================================================
-# Layout
-# ============================================================================
-
-PLOT_WIDTH = 920
-CURVE_HEIGHT = 410
-RESIDUAL_HEIGHT = 330
-OVERVIEW_HEIGHT = 460
-CANDIDATE_HEIGHT = 260
+from bokeh.plotting import figure
+from bokeh.resources import CDN
 
 
 # ============================================================================
-# Design system
+# Design
 # ============================================================================
 
-COLORS = {
-    "page": "#F4F6F8",
-    "surface": "#FFFFFF",
+BACKGROUND = "#f5f7fa"
+CARD_BACKGROUND = "#ffffff"
+TEXT = "#1f2937"
+MUTED_TEXT = "#64748b"
+GRID = "#e5e7eb"
+BORDER = "#dbe1e8"
 
-    "ink": "#172B4D",
-    "muted": "#6B778C",
-    "subtle": "#9AA7B5",
+TRAINING_COLOR = "#64748b"
+ASSIGNED_COLOR = "#16a34a"
+UNASSIGNED_COLOR = "#dc2626"
+THRESHOLD_COLOR = "#94a3b8"
 
-    "border": "#E2E8F0",
-    "grid": "#EDF1F5",
-
-    "training": "#4C78A8",
-    "ideal": "#E76F51",
-
-    "accepted": "#16A085",
-    "outside": "#D95D5D",
-    "rejected": "#98A2B3",
-
-    "candidate_selected": "#16A085",
-    "candidate_reserved": "#E5A62B",
-    "candidate_rejected": "#D95D5D",
-
-    "success_background": "#EAF7F3",
-    "warning_background": "#FFF4E5",
-    "neutral_background": "#F1F4F7",
-
-    "success_text": "#087F67",
-    "warning_text": "#946200",
-    "neutral_text": "#52616B",
-}
-
-
-# Each selected ideal function receives one stable color.
-ASSIGNMENT_COLORS = [
-    "#16A085",
-    "#4C78A8",
-    "#8C6BB1",
-    "#E5A62B",
-    "#D95D5D",
-    "#3A9D9A",
-    "#6C8EBF",
-    "#A66A9C",
+FUNCTION_COLORS = [
+    "#2563eb",
+    "#7c3aed",
+    "#0891b2",
+    "#ea580c",
 ]
 
+
 # ============================================================================
-# Shared plot styling
+# Data helpers
 # ============================================================================
 
-def _style_plot(plot) -> None:
-    """Apply the common visual style to a Bokeh plot."""
 
-    plot.background_fill_color = COLORS["surface"]
-    plot.border_fill_color = COLORS["surface"]
+def _prepare_indexed_frame(
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Prepare a dataframe for x-based lookup.
 
-    plot.outline_line_color = COLORS["border"]
+    X values are rounded before being used as lookup keys.
+    This absorbs floating-point noise introduced when the
+    training, ideal, and test data are parsed separately.
+    """
+    result = frame.copy()
+
+    result["x"] = (
+        pd.to_numeric(result["x"], errors="coerce")
+        .astype(float)
+        .round(9)
+    )
+
+    result = result.dropna(subset=["x"])
+
+    result = (
+        result
+        .set_index("x")
+        .sort_index()
+    )
+
+    return result
+
+
+def _safe_range(
+    values,
+    padding: float = 0.08,
+) -> tuple[float, float]:
+    """Return a visually useful numeric range."""
+    array = np.asarray(values, dtype=float)
+
+    array = array[np.isfinite(array)]
+
+    if len(array) == 0:
+        return -1.0, 1.0
+
+    minimum = float(np.min(array))
+    maximum = float(np.max(array))
+
+    if minimum == maximum:
+        margin = max(abs(minimum) * 0.1, 1.0)
+        return minimum - margin, maximum + margin
+
+    distance = maximum - minimum
+    margin = distance * padding
+
+    return minimum - margin, maximum + margin
+
+
+def _clean_axis(plot: figure) -> None:
+    """Apply consistent visual styling to a Bokeh figure."""
+    plot.background_fill_color = CARD_BACKGROUND
+    plot.border_fill_color = CARD_BACKGROUND
+
+    plot.outline_line_color = BORDER
     plot.outline_line_width = 1
 
-    # Title
-    plot.title.text_color = COLORS["ink"]
-    plot.title.text_font = "Arial"
+    plot.xgrid.grid_line_color = GRID
+    plot.ygrid.grid_line_color = GRID
+
+    plot.xgrid.grid_line_alpha = 0.65
+    plot.ygrid.grid_line_alpha = 0.65
+
+    plot.axis.axis_line_color = "#cbd5e1"
+    plot.axis.major_tick_line_color = "#cbd5e1"
+    plot.axis.minor_tick_line_color = None
+
+    plot.axis.major_label_text_color = MUTED_TEXT
+    plot.axis.axis_label_text_color = TEXT
+
+    plot.axis.major_label_text_font_size = "10px"
+    plot.axis.axis_label_text_font_size = "11px"
+
+    plot.title.text_color = TEXT
+    plot.title.text_font_size = "14px"
     plot.title.text_font_style = "bold"
-    plot.title.text_font_size = "14pt"
-    plot.title.align = "left"
 
-    # Grid
-    plot.xgrid.grid_line_color = COLORS["grid"]
-    plot.ygrid.grid_line_color = COLORS["grid"]
-
-    plot.xgrid.grid_line_alpha = 0.8
-    plot.ygrid.grid_line_alpha = 0.8
-
-    # Axes
-    plot.xaxis.axis_line_color = COLORS["border"]
-    plot.yaxis.axis_line_color = COLORS["border"]
-
-    plot.xaxis.major_tick_line_color = COLORS["border"]
-    plot.yaxis.major_tick_line_color = COLORS["border"]
-
-    plot.xaxis.minor_tick_line_color = None
-    plot.yaxis.minor_tick_line_color = None
-
-    # Axis labels
-    plot.xaxis.major_label_text_color = COLORS["muted"]
-    plot.yaxis.major_label_text_color = COLORS["muted"]
-
-    plot.xaxis.axis_label_text_color = COLORS["muted"]
-    plot.yaxis.axis_label_text_color = COLORS["muted"]
-
-    plot.xaxis.major_label_text_font = "Arial"
-    plot.yaxis.major_label_text_font = "Arial"
-
-    plot.xaxis.axis_label_text_font = "Arial"
-    plot.yaxis.axis_label_text_font = "Arial"
-
-    plot.xaxis.major_label_text_font_size = "10pt"
-    plot.yaxis.major_label_text_font_size = "10pt"
-
-    plot.xaxis.axis_label_text_font_size = "11pt"
-    plot.yaxis.axis_label_text_font_size = "11pt"
-
-    # Toolbar
     plot.toolbar.logo = None
-    plot.toolbar.autohide = True
+
+
+def _add_legend_below(
+    plot: figure,
+    items: list[LegendItem],
+) -> None:
+    """
+    Place the legend below the corresponding plot.
+
+    This avoids legends covering the actual diagrams.
+    """
+    legend = Legend(
+        items=items,
+        orientation="horizontal",
+        spacing=10,
+        padding=8,
+        margin=4,
+        label_text_font_size="10px",
+        label_text_color=MUTED_TEXT,
+        background_fill_color=CARD_BACKGROUND,
+        background_fill_alpha=1.0,
+        border_line_color=None,
+    )
+
+    plot.add_layout(legend, "below")
+
+
+def _selected_test_points(
+    mappings: pd.DataFrame,
+    ideal: pd.DataFrame,
+    ideal_column: str,
+) -> pd.DataFrame:
+    """Return test points assigned to one selected ideal function."""
+    if mappings.empty:
+        return pd.DataFrame(
+            columns=[
+                "x",
+                "y",
+                "predicted",
+                "deviation",
+            ]
+        )
+
+    result = mappings.copy()
+
+    result["x"] = (
+        pd.to_numeric(result["x"], errors="coerce")
+        .astype(float)
+        .round(9)
+    )
+
+    result["y"] = pd.to_numeric(
+        result["y"],
+        errors="coerce",
+    )
+
+    ideal_indexed = _prepare_indexed_frame(ideal)
+
+    result["predicted"] = result["x"].map(
+        ideal_indexed[ideal_column]
+    )
+
+    result["deviation"] = (
+        result["y"]
+        - result["predicted"]
+    ).abs()
+
+    result = result[
+        result["ideal_function"] == ideal_column
+    ].copy()
+
+    return result[
+        [
+            "x",
+            "y",
+            "predicted",
+            "deviation",
+        ]
+    ].dropna(
+        subset=["x", "y", "predicted"]
+    )
+
 
 # ============================================================================
-# Legend components
+# Individual function plot
 # ============================================================================
 
-def _legend_item(
-    color: str,
-    label: str,
-    marker: str = "circle",
-) -> str:
-    """Return a small HTML legend item."""
 
-    if marker == "line":
-        symbol = f"""
-            <span style="
-                display:inline-block;
-                width:22px;
-                height:3px;
-                background:{color};
-                vertical-align:middle;
-                margin-right:7px;
-                border-radius:2px;
-            "></span>
-        """
+def _create_function_plot(
+    training: pd.DataFrame,
+    ideal: pd.DataFrame,
+    mappings: pd.DataFrame,
+    selection,
+    function_index: int,
+) -> figure:
+    """
+    Create one independent plot for one selected ideal function.
 
-    elif marker == "diamond":
-        symbol = f"""
-            <span style="
-                display:inline-block;
-                width:9px;
-                height:9px;
-                background:{color};
-                transform:rotate(45deg);
-                margin:0 9px 1px 5px;
-                border-radius:2px;
-            "></span>
-        """
-
-    elif marker == "cross":
-        symbol = f"""
-            <span style="
-                display:inline-block;
-                width:18px;
-                margin-right:6px;
-                color:{color};
-                font-size:19px;
-                font-weight:700;
-                line-height:12px;
-                text-align:center;
-            ">×</span>
-        """
-
-    else:
-        symbol = f"""
-            <span style="
-                display:inline-block;
-                width:9px;
-                height:9px;
-                background:{color};
-                border-radius:50%;
-                margin-right:8px;
-            "></span>
-        """
-
-    return f"""
-        <span style="
-            display:inline-flex;
-            align-items:center;
-            margin-right:20px;
-            margin-bottom:5px;
-            color:{COLORS["muted"]};
-            font-size:12px;
-        ">
-            {symbol}
-            {label}
-        </span>
+    The important point here is that the ideal function is always
+    read directly from its own column. No function shares plotting
+    data with another function.
     """
 
+    training_indexed = _prepare_indexed_frame(training)
+    ideal_indexed = _prepare_indexed_frame(ideal)
 
-def _create_plot_key(
-    items: list[tuple[str, str, str]],
-) -> Div:
-    """Create a clean legend below a plot."""
+    training_column = selection.training_column
+    ideal_column = selection.ideal_column
 
-    content = "".join(
-        _legend_item(
-            color=color,
-            label=label,
-            marker=marker,
-        )
-        for color, label, marker in items
-    )
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            background:{COLORS["surface"]};
-            border-left:1px solid {COLORS["border"]};
-            border-right:1px solid {COLORS["border"]};
-            border-bottom:1px solid {COLORS["border"]};
-            border-radius:0 0 8px 8px;
-            padding:10px 16px 7px;
-            margin-top:-1px;
-        ">
-            {content}
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-# ============================================================================
-# Header
-# ============================================================================
-
-def _create_header(
-    assigned_count: int,
-    rejected_count: int,
-    function_count: int,
-) -> Div:
-    """Create the dashboard header."""
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            padding:12px 4px 22px;
-        ">
-
-            <div style="
-                margin-bottom:22px;
-            ">
-
-                <div style="
-                    font-size:28px;
-                    font-weight:700;
-                    color:{COLORS["ink"]};
-                    letter-spacing:-0.5px;
-                ">
-                    Ideal Function Assignment
-                </div>
-
-                <div style="
-                    margin-top:7px;
-                    font-size:14px;
-                    color:{COLORS["muted"]};
-                ">
-                    Least-squares fitting and
-                    <b>√2 maximum-deviation</b>
-                    test-data classification
-                </div>
-
-            </div>
-
-
-            <div style="
-                display:flex;
-                gap:12px;
-                flex-wrap:wrap;
-            ">
-
-                <div style="
-                    flex:1;
-                    min-width:180px;
-                    background:{COLORS["surface"]};
-                    border:1px solid {COLORS["border"]};
-                    border-radius:9px;
-                    padding:15px 18px;
-                ">
-
-                    <div style="
-                        font-size:10px;
-                        font-weight:700;
-                        letter-spacing:0.8px;
-                        text-transform:uppercase;
-                        color:{COLORS["success_text"]};
-                    ">
-                        Assigned
-                    </div>
-
-                    <div style="
-                        margin-top:4px;
-                        font-size:26px;
-                        font-weight:700;
-                        color:{COLORS["ink"]};
-                    ">
-                        {assigned_count}
-                    </div>
-
-                    <div style="
-                        font-size:12px;
-                        color:{COLORS["muted"]};
-                    ">
-                        test points
-                    </div>
-
-                </div>
-
-
-                <div style="
-                    flex:1;
-                    min-width:180px;
-                    background:{COLORS["surface"]};
-                    border:1px solid {COLORS["border"]};
-                    border-radius:9px;
-                    padding:15px 18px;
-                ">
-
-                    <div style="
-                        font-size:10px;
-                        font-weight:700;
-                        letter-spacing:0.8px;
-                        text-transform:uppercase;
-                        color:{COLORS["muted"]};
-                    ">
-                        Unassigned
-                    </div>
-
-                    <div style="
-                        margin-top:4px;
-                        font-size:26px;
-                        font-weight:700;
-                        color:{COLORS["ink"]};
-                    ">
-                        {rejected_count}
-                    </div>
-
-                    <div style="
-                        font-size:12px;
-                        color:{COLORS["muted"]};
-                    ">
-                        test points
-                    </div>
-
-                </div>
-
-
-                <div style="
-                    flex:1;
-                    min-width:180px;
-                    background:{COLORS["surface"]};
-                    border:1px solid {COLORS["border"]};
-                    border-radius:9px;
-                    padding:15px 18px;
-                ">
-
-                    <div style="
-                        font-size:10px;
-                        font-weight:700;
-                        letter-spacing:0.8px;
-                        text-transform:uppercase;
-                        color:{COLORS["warning_text"]};
-                    ">
-                        Selected functions
-                    </div>
-
-                    <div style="
-                        margin-top:4px;
-                        font-size:26px;
-                        font-weight:700;
-                        color:{COLORS["ink"]};
-                    ">
-                        {function_count}
-                    </div>
-
-                    <div style="
-                        font-size:12px;
-                        color:{COLORS["muted"]};
-                    ">
-                        ideal functions
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-# ============================================================================
-# Explanatory components
-# ============================================================================
-
-def _create_method_note() -> Div:
-    """Explain the assignment method."""
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            background:{COLORS["surface"]};
-            border:1px solid {COLORS["border"]};
-            border-radius:9px;
-            padding:15px 18px;
-            margin-bottom:16px;
-        ">
-
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                color:{COLORS["ink"]};
-                text-transform:uppercase;
-                letter-spacing:0.7px;
-                margin-bottom:6px;
-            ">
-                How the assignment works
-            </div>
-
-            <div style="
-                font-size:13px;
-                line-height:1.6;
-                color:{COLORS["muted"]};
-            ">
-                Each training function is compared with the available ideal
-                functions using least-squares error. A test point is assigned
-                when its deviation from the selected ideal function is no
-                greater than <b>√2 × maximum training deviation</b>.
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-
-def _create_mapping_header(
-    selection: Selection,
-) -> Div:
-    """Create the header for an individual mapping."""
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            padding:2px 0 14px;
-        ">
-
-            <div style="
-                font-size:19px;
-                font-weight:700;
-                color:{COLORS["ink"]};
-            ">
-
-                {selection.training_column}
-
-                <span style="
-                    color:{COLORS["subtle"]};
-                    padding:0 8px;
-                ">
-                    →
-                </span>
-
-                {selection.ideal_column}
-
-            </div>
-
-            <div style="
-                margin-top:5px;
-                font-size:13px;
-                color:{COLORS["muted"]};
-            ">
-                Best-fit ideal function for this training function
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-def _create_fit_evidence(
-    selection: Selection,
-    threshold: float,
-) -> Div:
-    """Create compact fit statistics."""
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            background:{COLORS["surface"]};
-            border:1px solid {COLORS["border"]};
-            border-radius:9px;
-            padding:14px 18px;
-            margin-bottom:16px;
-        ">
-
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                color:{COLORS["ink"]};
-                text-transform:uppercase;
-                letter-spacing:0.7px;
-                margin-bottom:11px;
-            ">
-                Fit evidence
-            </div>
-
-
-            <div style="
-                display:flex;
-                gap:10px;
-                flex-wrap:wrap;
-            ">
-
-                <div style="
-                    flex:1;
-                    min-width:160px;
-                    background:{COLORS["neutral_background"]};
-                    border-radius:7px;
-                    padding:10px 12px;
-                ">
-                    <div style="
-                        font-size:11px;
-                        color:{COLORS["muted"]};
-                    ">
-                        SSE
-                    </div>
-
-                    <div style="
-                        margin-top:3px;
-                        font-size:16px;
-                        font-weight:700;
-                        color:{COLORS["ink"]};
-                    ">
-                        {selection.sum_squared_error:.6g}
-                    </div>
-                </div>
-
-
-                <div style="
-                    flex:1;
-                    min-width:160px;
-                    background:{COLORS["neutral_background"]};
-                    border-radius:7px;
-                    padding:10px 12px;
-                ">
-                    <div style="
-                        font-size:11px;
-                        color:{COLORS["muted"]};
-                    ">
-                        Max training deviation
-                    </div>
-
-                    <div style="
-                        margin-top:3px;
-                        font-size:16px;
-                        font-weight:700;
-                        color:{COLORS["ink"]};
-                    ">
-                        {selection.max_deviation:.6g}
-                    </div>
-                </div>
-
-
-                <div style="
-                    flex:1;
-                    min-width:160px;
-                    background:{COLORS["success_background"]};
-                    border-radius:7px;
-                    padding:10px 12px;
-                ">
-                    <div style="
-                        font-size:11px;
-                        color:{COLORS["success_text"]};
-                    ">
-                        √2 acceptance limit
-                    </div>
-
-                    <div style="
-                        margin-top:3px;
-                        font-size:16px;
-                        font-weight:700;
-                        color:{COLORS["success_text"]};
-                    ">
-                        {threshold:.6g}
-                    </div>
-                </div>
-
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-# ============================================================================
-# Candidate comparison ("why this function")
-# ============================================================================
-
-def _create_comparison_note() -> Div:
-    """Explain the candidate comparison chart."""
-
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            background:{COLORS["surface"]};
-            border:1px solid {COLORS["border"]};
-            border-radius:9px;
-            padding:14px 18px;
-            margin-bottom:16px;
-        ">
-
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                color:{COLORS["ink"]};
-                text-transform:uppercase;
-                letter-spacing:0.7px;
-                margin-bottom:6px;
-            ">
-                Why this function
-            </div>
-
-            <div style="
-                font-size:13px;
-                line-height:1.6;
-                color:{COLORS["muted"]};
-            ">
-                Bars show the sum of squared errors between the training
-                data and each of the closest candidate ideal functions, on
-                a <b>log scale</b> since candidates can differ by several
-                orders of magnitude. <b>Green</b> is the selected function.
-                <b>Red</b> candidates simply had a higher error. <b>Amber</b>
-                candidates had a lower error than the selection but were
-                already reserved for a different training function, since
-                each ideal function may only be used once.
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
-    )
-
-
-def _create_comparison_chart(
-    selection: Selection,
-    claimed_by: dict[str, str],
-) -> tuple[object, Div]:
-    """Create a bar chart comparing the selection against close candidates."""
-
-    categories = [
-        candidate.ideal_column
-        for candidate in selection.alternatives
+    function_color = FUNCTION_COLORS[
+        function_index % len(FUNCTION_COLORS)
     ]
 
-    colors = []
-    statuses = []
+    # ------------------------------------------------------------------
+    # Get the exact data for this function.
+    # ------------------------------------------------------------------
 
-    for candidate in selection.alternatives:
-        if candidate.ideal_column == selection.ideal_column:
-            colors.append(COLORS["candidate_selected"])
-            statuses.append("Selected")
-            continue
+    ideal_data = pd.DataFrame({
+        "x": ideal_indexed.index.to_numpy(dtype=float),
+        "y": pd.to_numeric(
+            ideal_indexed[ideal_column],
+            errors="coerce",
+        ).to_numpy(dtype=float),
+    })
 
-        reserved_for = claimed_by.get(candidate.ideal_column)
+    ideal_data = ideal_data.dropna()
 
-        if reserved_for is not None:
-            colors.append(COLORS["candidate_reserved"])
-            statuses.append(
-                f"Reserved for {reserved_for}"
+    ideal_data = ideal_data.sort_values("x")
+
+    training_data = pd.DataFrame({
+        "x": training_indexed.index.to_numpy(dtype=float),
+        "y": pd.to_numeric(
+            training_indexed[training_column],
+            errors="coerce",
+        ).to_numpy(dtype=float),
+    })
+
+    training_data = training_data.dropna()
+
+    training_data = training_data.sort_values("x")
+
+    # ------------------------------------------------------------------
+    # Assigned test points.
+    # ------------------------------------------------------------------
+
+    assigned = _selected_test_points(
+        mappings,
+        ideal,
+        ideal_column,
+    )
+
+    # ------------------------------------------------------------------
+    # Unassigned test points that are inside this function's x-domain.
+    # ------------------------------------------------------------------
+
+    unassigned = mappings[
+        mappings["ideal_function"].isna()
+    ].copy()
+
+    if not unassigned.empty:
+        unassigned["x"] = (
+            pd.to_numeric(
+                unassigned["x"],
+                errors="coerce",
             )
-        else:
-            colors.append(COLORS["candidate_rejected"])
-            statuses.append("Higher error")
-
-    source = ColumnDataSource(
-        data={
-            "ideal_column": categories,
-            "sum_squared_error": [
-                candidate.sum_squared_error
-                for candidate in selection.alternatives
-            ],
-            "color": colors,
-            "status": statuses,
-        }
-    )
-
-    chart = figure(
-        title="Closest candidate ideal functions",
-        x_range=FactorRange(*categories),
-        x_axis_label="Ideal function",
-        y_axis_label="Sum of squared errors (log scale)",
-        y_axis_type="log",
-        width=PLOT_WIDTH,
-        height=CANDIDATE_HEIGHT,
-        tools="pan,wheel_zoom,box_zoom,reset",
-        toolbar_location="above",
-    )
-
-    _style_plot(chart)
-
-    # A logarithmic y-axis cannot display bars starting at zero.
-    # Since the candidate errors can range from very small values to billions, the bars start from a small positive value instead.
-    smallest_error = min(
-        candidate.sum_squared_error
-        for candidate in selection.alternatives
-    )
-
-    bar_floor = max(smallest_error / 10, 1e-9)
-
-    bars = chart.vbar(
-        x="ideal_column",
-        top="sum_squared_error",
-        bottom=bar_floor,
-        width=0.6,
-        source=source,
-        color="color",
-        line_color=None,
-    )
-
-    chart.add_tools(
-        HoverTool(
-            renderers=[bars],
-            tooltips=[
-                ("Ideal function", "@ideal_column"),
-                (
-                    "Sum of squared errors",
-                    "@sum_squared_error{0.0000}",
-                ),
-                ("Status", "@status"),
-            ],
-        )
-    )
-
-    chart.xgrid.grid_line_color = None
-
-    key_items = [
-        (
-            COLORS["candidate_selected"],
-            "Selected",
-            "circle",
-        ),
-        (
-            COLORS["candidate_rejected"],
-            "Higher error",
-            "circle",
-        ),
-    ]
-
-    if any(status.startswith("Reserved") for status in statuses):
-        key_items.append(
-            (
-                COLORS["candidate_reserved"],
-                "Reserved for another training function",
-                "circle",
-            )
+            .astype(float)
+            .round(9)
         )
 
-    chart_key = _create_plot_key(key_items)
-
-    return chart, chart_key
-
-
-def _create_deviation_result(
-    accepted_count: int,
-    total_count: int,
-) -> Div:
-    """Create the conclusion below the deviation chart."""
-
-    if total_count == 0:
-        background = COLORS["neutral_background"]
-        text_color = COLORS["neutral_text"]
-        result = "No test points are assigned to this ideal function."
-
-    elif accepted_count == total_count:
-        background = COLORS["success_background"]
-        text_color = COLORS["success_text"]
-        result = (
-            f"✓ {accepted_count} / {total_count} assigned test points "
-            "are within the acceptance limit."
+        unassigned["y"] = pd.to_numeric(
+            unassigned["y"],
+            errors="coerce",
         )
 
+        unassigned["predicted"] = unassigned[
+            "x"
+        ].map(
+            ideal_indexed[ideal_column]
+        )
+
+        unassigned = unassigned.dropna(
+            subset=[
+                "x",
+                "y",
+                "predicted",
+            ]
+        )
     else:
-        background = COLORS["warning_background"]
-        text_color = COLORS["warning_text"]
-        result = (
-            f"{accepted_count} / {total_count} assigned test points "
-            "are within the acceptance limit."
+        unassigned = pd.DataFrame(
+            columns=[
+                "x",
+                "y",
+                "predicted",
+            ]
         )
 
-    return Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            margin:12px 0 18px;
-        ">
+    # ------------------------------------------------------------------
+    # Deviation threshold.
+    # ------------------------------------------------------------------
 
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                text-transform:uppercase;
-                letter-spacing:0.7px;
-                color:{COLORS["ink"]};
-                margin-bottom:7px;
-            ">
-                Test-point deviation
-            </div>
-
-            <div style="
-                font-size:12px;
-                color:{COLORS["muted"]};
-                margin-bottom:10px;
-            ">
-                Lower deviation means the test point lies closer to
-                the selected ideal function.
-                Points below the dashed line satisfy the acceptance criterion.
-            </div>
-
-            <div style="
-                background:{background};
-                color:{text_color};
-                border-radius:7px;
-                padding:10px 13px;
-                font-size:13px;
-                font-weight:700;
-            ">
-                {result}
-            </div>
-
-        </div>
-        """,
-        width=PLOT_WIDTH,
+    threshold = (
+        np.sqrt(2)
+        * float(selection.max_deviation)
     )
+
+    ideal_x = ideal_data["x"].to_numpy()
+    ideal_y = ideal_data["y"].to_numpy()
+
+    upper_y = ideal_y + threshold
+    lower_y = ideal_y - threshold
+
+    # ------------------------------------------------------------------
+    # Determine plot range.
+    #
+    # Important:
+    # Huge outlier test observations are intentionally NOT used
+    # to determine the main y-axis range. Otherwise a few extreme
+    # unassigned points can flatten the actual function visually.
+    # ------------------------------------------------------------------
+
+    visible_values = [
+        ideal_y,
+        training_data["y"].to_numpy(),
+        upper_y,
+        lower_y,
+    ]
+
+    if not assigned.empty:
+        visible_values.append(
+            assigned["y"].to_numpy()
+        )
+
+    combined = np.concatenate(
+        [
+            np.asarray(values, dtype=float)
+            for values in visible_values
+            if len(values) > 0
+        ]
+    )
+
+    y_min, y_max = _safe_range(
+        combined,
+        padding=0.10,
+    )
+
+    x_min, x_max = _safe_range(
+        ideal_x,
+        padding=0.03,
+    )
+
+    # ------------------------------------------------------------------
+    # Figure.
+    # ------------------------------------------------------------------
+
+    plot = figure(
+        title=(
+            f"{training_column}  →  {ideal_column}"
+        ),
+        width=760,
+        height=440,
+        x_axis_label="x",
+        y_axis_label="Function value",
+        x_range=Range1d(
+            x_min,
+            x_max,
+        ),
+        y_range=Range1d(
+            y_min,
+            y_max,
+        ),
+        toolbar_location="above",
+        sizing_mode="stretch_width",
+    )
+
+    _clean_axis(plot)
+
+    # ------------------------------------------------------------------
+    # Ideal function.
+    # ------------------------------------------------------------------
+
+    ideal_source = ColumnDataSource(
+        ideal_data
+    )
+
+    ideal_renderer = plot.line(
+        x="x",
+        y="y",
+        source=ideal_source,
+        line_color=function_color,
+        line_width=3,
+        alpha=0.95,
+    )
+
+    # ------------------------------------------------------------------
+    # Training observations.
+    # ------------------------------------------------------------------
+
+    training_source = ColumnDataSource(
+        training_data
+    )
+
+    training_renderer = plot.scatter(
+        x="x",
+        y="y",
+        source=training_source,
+        size=6,
+        alpha=0.55,
+        color=TRAINING_COLOR,
+        line_color=CARD_BACKGROUND,
+        line_width=1,
+    )
+
+    # ------------------------------------------------------------------
+    # Deviation boundaries.
+    # ------------------------------------------------------------------
+
+    upper_renderer = plot.line(
+        ideal_x,
+        upper_y,
+        line_color=THRESHOLD_COLOR,
+        line_width=1.5,
+        line_dash="dashed",
+        alpha=0.85,
+    )
+
+    lower_renderer = plot.line(
+        ideal_x,
+        lower_y,
+        line_color=THRESHOLD_COLOR,
+        line_width=1.5,
+        line_dash="dashed",
+        alpha=0.85,
+    )
+
+    # ------------------------------------------------------------------
+    # Assigned test observations.
+    # ------------------------------------------------------------------
+
+    assigned_renderer = None
+
+    if not assigned.empty:
+        assigned_source = ColumnDataSource(
+            assigned
+        )
+
+        assigned_renderer = plot.scatter(
+            x="x",
+            y="y",
+            source=assigned_source,
+            size=9,
+            alpha=0.95,
+            color=ASSIGNED_COLOR,
+            line_color=CARD_BACKGROUND,
+            line_width=1.2,
+        )
+
+        plot.add_tools(
+            HoverTool(
+                renderers=[
+                    assigned_renderer
+                ],
+                tooltips=[
+                    (
+                        "x",
+                        "@x{0.000000}",
+                    ),
+                    (
+                        "Actual",
+                        "@y{0.000000}",
+                    ),
+                    (
+                        "Predicted",
+                        "@predicted{0.000000}",
+                    ),
+                    (
+                        "Deviation",
+                        "@deviation{0.000000}",
+                    ),
+                ],
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Unassigned observations.
+    # ------------------------------------------------------------------
+
+    unassigned_renderer = None
+
+    if not unassigned.empty:
+        unassigned_source = ColumnDataSource(
+            unassigned[
+                [
+                    "x",
+                    "y",
+                    "predicted",
+                ]
+            ]
+        )
+
+        unassigned_renderer = plot.scatter(
+            x="x",
+            y="y",
+            source=unassigned_source,
+            size=8,
+            alpha=0.50,
+            color=UNASSIGNED_COLOR,
+            line_color=CARD_BACKGROUND,
+            line_width=1,
+        )
+
+        plot.add_tools(
+            HoverTool(
+                renderers=[
+                    unassigned_renderer
+                ],
+                tooltips=[
+                    (
+                        "x",
+                        "@x{0.000000}",
+                    ),
+                    (
+                        "Actual",
+                        "@y{0.000000}",
+                    ),
+                    (
+                        "Predicted",
+                        "@predicted{0.000000}",
+                    ),
+                ],
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Threshold annotation.
+    # ------------------------------------------------------------------
+
+    threshold_label = Label(
+        x=x_min,
+        y=y_max,
+        x_units="data",
+        y_units="data",
+        text=(
+            f"Allowed deviation: ±{threshold:.4f}"
+        ),
+        text_color=MUTED_TEXT,
+        text_font_size="10px",
+        background_fill_color=CARD_BACKGROUND,
+        background_fill_alpha=0.90,
+        border_line_color=BORDER,
+        border_line_alpha=0.8,
+        padding=7,
+    )
+
+    plot.add_layout(
+        threshold_label
+    )
+
+    # ------------------------------------------------------------------
+    # Legend BELOW the diagram.
+    # ------------------------------------------------------------------
+
+    legend_items = [
+        LegendItem(
+            label=f"Selected ideal function ({ideal_column})",
+            renderers=[
+                ideal_renderer
+            ],
+        ),
+        LegendItem(
+            label=f"Training data ({training_column})",
+            renderers=[
+                training_renderer
+            ],
+        ),
+        LegendItem(
+            label="Allowed deviation",
+            renderers=[
+                upper_renderer
+            ],
+        ),
+    ]
+
+    if assigned_renderer is not None:
+        legend_items.append(
+            LegendItem(
+                label="Assigned test points",
+                renderers=[
+                    assigned_renderer
+                ],
+            )
+        )
+
+    if unassigned_renderer is not None:
+        legend_items.append(
+            LegendItem(
+                label="Unassigned test points",
+                renderers=[
+                    unassigned_renderer
+                ],
+            )
+        )
+
+    _add_legend_below(
+        plot,
+        legend_items,
+    )
+
+    return plot
+
+
+# ============================================================================
+# Predicted vs actual
+# ============================================================================
+
+
+def _create_prediction_plot(
+    mappings: pd.DataFrame,
+    ideal: pd.DataFrame,
+    selections: list,
+) -> figure:
+    """
+    Create a clear predicted-versus-actual visualization.
+
+    Every point represents ONE assigned test observation.
+
+    X-axis:
+        value predicted by the selected ideal function
+
+    Y-axis:
+        actual observed test value
+
+    Perfect predictions lie on the diagonal.
+    """
+
+    prediction_frames = []
+
+    for selection in selections:
+        assigned = _selected_test_points(
+            mappings,
+            ideal,
+            selection.ideal_column,
+        )
+
+        if not assigned.empty:
+            prediction_frames.append(
+                assigned[
+                    [
+                        "predicted",
+                        "y",
+                        "deviation",
+                    ]
+                ]
+            )
+
+    if prediction_frames:
+        data = pd.concat(
+            prediction_frames,
+            ignore_index=True,
+        )
+    else:
+        data = pd.DataFrame(
+            columns=[
+                "predicted",
+                "y",
+                "deviation",
+            ]
+        )
+
+    data = data.dropna()
+
+    # ------------------------------------------------------------------
+    # Range.
+    # ------------------------------------------------------------------
+
+    if data.empty:
+        minimum = 0.0
+        maximum = 1.0
+    else:
+        minimum = min(
+            data["predicted"].min(),
+            data["y"].min(),
+        )
+
+        maximum = max(
+            data["predicted"].max(),
+            data["y"].max(),
+        )
+
+    if minimum == maximum:
+        margin = max(
+            abs(minimum) * 0.1,
+            1.0,
+        )
+    else:
+        margin = (
+            maximum - minimum
+        ) * 0.08
+
+    lower = minimum - margin
+    upper = maximum + margin
+
+    plot = figure(
+        title="Predicted versus actual values",
+        width=760,
+        height=470,
+        x_axis_label="Predicted value",
+        y_axis_label="Actual value",
+        x_range=Range1d(
+            lower,
+            upper,
+        ),
+        y_range=Range1d(
+            lower,
+            upper,
+        ),
+        toolbar_location="above",
+        sizing_mode="stretch_width",
+    )
+
+    _clean_axis(plot)
+
+    # ------------------------------------------------------------------
+    # Perfect prediction line.
+    # ------------------------------------------------------------------
+
+    perfect_line = plot.line(
+        [lower, upper],
+        [lower, upper],
+        line_color="#475569",
+        line_width=2,
+        line_dash="dashed",
+        alpha=0.85,
+    )
+
+    # ------------------------------------------------------------------
+    # Assigned observations.
+    # ------------------------------------------------------------------
+
+    if not data.empty:
+        source = ColumnDataSource(
+            data
+        )
+
+        scatter = plot.scatter(
+            x="predicted",
+            y="y",
+            source=source,
+            size=9,
+            alpha=0.85,
+            color=ASSIGNED_COLOR,
+            line_color=CARD_BACKGROUND,
+            line_width=1,
+        )
+
+        plot.add_tools(
+            HoverTool(
+                renderers=[
+                    scatter
+                ],
+                tooltips=[
+                    (
+                        "Predicted",
+                        "@predicted{0.000000}",
+                    ),
+                    (
+                        "Actual",
+                        "@y{0.000000}",
+                    ),
+                    (
+                        "Absolute deviation",
+                        "@deviation{0.000000}",
+                    ),
+                ],
+            )
+        )
+    else:
+        scatter = None
+
+    # ------------------------------------------------------------------
+    # Legend below.
+    # ------------------------------------------------------------------
+
+    legend_items = [
+        LegendItem(
+            label="Perfect prediction",
+            renderers=[
+                perfect_line
+            ],
+        )
+    ]
+
+    if scatter is not None:
+        legend_items.append(
+            LegendItem(
+                label="Assigned test observations",
+                renderers=[
+                    scatter
+                ],
+            )
+        )
+
+    _add_legend_below(
+        plot,
+        legend_items,
+    )
+
+    # ------------------------------------------------------------------
+    # Explanation.
+    # ------------------------------------------------------------------
+
+    if not data.empty:
+        mean_deviation = float(
+            data["deviation"].mean()
+        )
+
+        label = Label(
+            x=lower,
+            y=upper,
+            x_units="data",
+            y_units="data",
+            text=(
+                f"Mean absolute deviation: "
+                f"{mean_deviation:.4f}"
+            ),
+            text_color=MUTED_TEXT,
+            text_font_size="10px",
+            background_fill_color=CARD_BACKGROUND,
+            background_fill_alpha=0.90,
+            border_line_color=BORDER,
+            border_line_alpha=0.8,
+            padding=7,
+        )
+
+        plot.add_layout(label)
+
+    return plot
+
+
+# ============================================================================
+# Summary cards
+# ============================================================================
+
+
+def _create_summary_card(
+    total_points: int,
+    assigned_points: int,
+    unassigned_points: int,
+    selections: list,
+) -> str:
+    """Create the dashboard summary cards."""
+
+    assignment_rate = (
+        assigned_points
+        / total_points
+        * 100
+        if total_points
+        else 0.0
+    )
+
+    function_items = "".join(
+        f"""
+        <div class="function-item">
+            <span class="function-training">
+                {selection.training_column}
+            </span>
+
+            <span class="function-arrow">
+                →
+            </span>
+
+            <span class="function-ideal">
+                {selection.ideal_column}
+            </span>
+        </div>
+        """
+        for selection in selections
+    )
+
+    return f"""
+    <section class="summary-grid">
+
+        <div class="metric-card">
+            <div class="metric-label">
+                Test observations
+            </div>
+
+            <div class="metric-value">
+                {total_points}
+            </div>
+
+            <div class="metric-description">
+                Observations evaluated by the mapping procedure
+            </div>
+        </div>
+
+        <div class="metric-card assigned-card">
+            <div class="metric-label">
+                Assigned
+            </div>
+
+            <div class="metric-value">
+                {assigned_points}
+            </div>
+
+            <div class="metric-description">
+                {assignment_rate:.1f}% of all test observations
+            </div>
+        </div>
+
+        <div class="metric-card unassigned-card">
+            <div class="metric-label">
+                Unassigned
+            </div>
+
+            <div class="metric-value">
+                {unassigned_points}
+            </div>
+
+            <div class="metric-description">
+                Observations exceeding the allowed deviation
+            </div>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-label">
+                Selected functions
+            </div>
+
+            <div class="function-list">
+                {function_items}
+            </div>
+        </div>
+
+    </section>
+    """
 
 
 # ============================================================================
 # Main visualization
 # ============================================================================
 
+
 def create_visualization(
     training: pd.DataFrame,
     ideal: pd.DataFrame,
     mappings: pd.DataFrame,
-    selections: list[Selection],
+    selections: list,
     output_path: str | Path,
 ) -> None:
-    """Create and save the interactive visualization dashboard."""
+    """Create the complete interactive thesis visualization."""
 
-    output_file(
-        Path(output_path),
-        title="Ideal Function Mapping",
+    output_path = Path(output_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    panels = []
+    total_points = len(mappings)
 
-    # Shows which training column was assigned to each ideal function.
-    # This helps explain why a candidate with a lower error may not have been selected: 
-    # its ideal function may have already been assigned to another training column.
-    claimed_by = {
-        selection.ideal_column: selection.training_column
-        for selection in selections
-    }
-
-    # ------------------------------------------------------------------------
-    # Individual function tabs
-    # ------------------------------------------------------------------------
-
-    for selection_index, selection in enumerate(selections):
-
-        assignment_color = ASSIGNMENT_COLORS[
-            selection_index % len(ASSIGNMENT_COLORS)
-        ]
-
-        assigned = mappings[
-            mappings["ideal_function"]
-            == selection.ideal_column
-        ].copy()
-
-        threshold = (
-            selection.max_deviation
-            * 2**0.5
-        )
-
-        # ====================================================================
-        # Main function chart
-        # ====================================================================
-
-        curve = figure(
-            title="Training data and selected ideal function",
-            x_axis_label="x",
-            y_axis_label="y",
-            width=PLOT_WIDTH,
-            height=CURVE_HEIGHT,
-            tools="pan,wheel_zoom,box_zoom,reset",
-            toolbar_location="above",
-        )
-
-        _style_plot(curve)
-
-        # Training data
-        training_source = ColumnDataSource(
-            data={
-                "x": training["x"],
-                "y": training[
-                    selection.training_column
-                ],
-            }
-        )
-
-        training_renderer = curve.scatter(
-            "x",
-            "y",
-            source=training_source,
-            color=COLORS["training"],
-            size=6,
-            alpha=0.55,
-        )
-
-        # Ideal function
-        ideal_source = ColumnDataSource(
-            data={
-                "x": ideal["x"],
-                "y": ideal[
-                    selection.ideal_column
-                ],
-            }
-        )
-
-        ideal_renderer = curve.line(
-            "x",
-            "y",
-            source=ideal_source,
-            color=COLORS["ideal"],
-            line_width=3,
-            alpha=0.95,
-        )
-
-        # Assigned test points
-        if not assigned.empty:
-
-            assigned_source = ColumnDataSource(
-                assigned
-            )
-
-            test_renderer = curve.scatter(
-                "x",
-                "y",
-                source=assigned_source,
-                color=assignment_color,
-                marker="diamond",
-                size=10,
-                alpha=0.95,
-            )
-
-            curve.add_tools(
-                HoverTool(
-                    renderers=[test_renderer],
-                    tooltips=[
-                        ("x", "@x{0.000}"),
-                        ("y", "@y{0.000}"),
-                        (
-                            "Deviation",
-                            "@deviation{0.0000}",
-                        ),
-                    ],
-                )
-            )
-
-        curve.add_tools(
-            HoverTool(
-                renderers=[training_renderer],
-                tooltips=[
-                    ("x", "@x{0.000}"),
-                    ("y", "@y{0.000}"),
-                    ("Type", "Training data"),
-                ],
-            )
-        )
-
-        curve.add_tools(
-            HoverTool(
-                renderers=[ideal_renderer],
-                tooltips=[
-                    ("x", "$x{0.000}"),
-                    ("y", "$y{0.000}"),
-                    (
-                        "Type",
-                        "Selected ideal function",
-                    ),
-                ],
-            )
-        )
-
-        curve_key = _create_plot_key(
-            [
-                (
-                    COLORS["training"],
-                    "Training data",
-                    "circle",
-                ),
-                (
-                    COLORS["ideal"],
-                    "Selected ideal function",
-                    "line",
-                ),
-                (
-                    assignment_color,
-                    "Assigned test data",
-                    "diamond",
-                ),
-            ]
-        )
-
-        # ====================================================================
-        # Deviation chart
-        # ====================================================================
-
-        residual = figure(
-            title="Deviation of assigned test points",
-            x_axis_label="x",
-            y_axis_label="Absolute deviation",
-            width=PLOT_WIDTH,
-            height=RESIDUAL_HEIGHT,
-            tools="pan,wheel_zoom,box_zoom,reset",
-            toolbar_location="above",
-        )
-
-        _style_plot(residual)
-
-        # Accepted region
-        residual.add_layout(
-            BoxAnnotation(
-                bottom=0,
-                top=threshold,
-                fill_color=COLORS["accepted"],
-                fill_alpha=0.07,
-                line_alpha=0,
-            )
-        )
-
-        # Acceptance threshold
-        residual.add_layout(
-            Span(
-                location=threshold,
-                dimension="width",
-                line_color=COLORS["ideal"],
-                line_dash="dashed",
-                line_width=2,
-            )
-        )
-
-        # Direct threshold label
-        residual.add_layout(
-            Label(
-                x=0,
-                y=threshold,
-                x_units="screen",
-                y_units="data",
-                x_offset=12,
-                y_offset=6,
-                text=f"√2 limit = {threshold:.6g}",
-                text_color=COLORS["ideal"],
-                text_font="Arial",
-                text_font_size="10pt",
-                text_font_style="bold",
-                background_fill_color=COLORS["surface"],
-                background_fill_alpha=0.92,
-                border_line_color=COLORS["border"],
-                border_line_alpha=0.8,
-                padding=5,
-            )
-        )
-
-        # --------------------------------------------------------------------
-        # Determine accepted/outside points
-        # --------------------------------------------------------------------
-
-        if not assigned.empty:
-
-            assigned["deviation"] = pd.to_numeric(
-                assigned["deviation"],
-                errors="coerce",
-            )
-
-            accepted = assigned[
-                assigned["deviation"] <= threshold
-            ]
-
-            outside_limit = assigned[
-                assigned["deviation"] > threshold
-            ]
-
-            accepted_count = len(accepted)
-            total_count = len(assigned)
-
-            # Accepted points
-            if not accepted.empty:
-
-                accepted_source = ColumnDataSource(
-                    accepted
-                )
-
-                accepted_renderer = residual.scatter(
-                    "x",
-                    "deviation",
-                    source=accepted_source,
-                    color=COLORS["accepted"],
-                    marker="diamond",
-                    size=9,
-                    alpha=0.95,
-                )
-
-                residual.add_tools(
-                    HoverTool(
-                        renderers=[
-                            accepted_renderer
-                        ],
-                        tooltips=[
-                            ("x", "@x{0.000}"),
-                            (
-                                "Deviation",
-                                "@deviation{0.0000}",
-                            ),
-                            (
-                                "Status",
-                                "Accepted",
-                            ),
-                        ],
-                    )
-                )
-
-            # Outside-limit points
-            if not outside_limit.empty:
-
-                outside_source = ColumnDataSource(
-                    outside_limit
-                )
-
-                outside_renderer = residual.scatter(
-                    "x",
-                    "deviation",
-                    source=outside_source,
-                    color=COLORS["outside"],
-                    marker="circle",
-                    size=10,
-                    alpha=0.95,
-                )
-
-                residual.add_tools(
-                    HoverTool(
-                        renderers=[
-                            outside_renderer
-                        ],
-                        tooltips=[
-                            ("x", "@x{0.000}"),
-                            (
-                                "Deviation",
-                                "@deviation{0.0000}",
-                            ),
-                            (
-                                "Status",
-                                "Outside limit",
-                            ),
-                        ],
-                    )
-                )
-
-        else:
-            accepted_count = 0
-            total_count = 0
-
-        residual_key = _create_plot_key(
-            [
-                (
-                    COLORS["accepted"],
-                    "Within acceptance limit",
-                    "diamond",
-                ),
-                (
-                    COLORS["outside"],
-                    "Outside acceptance limit",
-                    "circle",
-                ),
-                (
-                    COLORS["ideal"],
-                    "√2 acceptance limit",
-                    "line",
-                ),
-            ]
-        )
-
-        deviation_result = _create_deviation_result(
-            accepted_count=accepted_count,
-            total_count=total_count,
-        )
-
-        # ====================================================================
-        # Candidate comparison
-        # ====================================================================
-
-        comparison_chart, comparison_key = _create_comparison_chart(
-            selection,
-            claimed_by,
-        )
-
-        # ====================================================================
-        # Individual tab
-        # ====================================================================
-
-        panels.append(
-            TabPanel(
-                title=(
-                    f"{selection.training_column}"
-                    f" → "
-                    f"{selection.ideal_column}"
-                ),
-                child=column(
-                    _create_mapping_header(
-                        selection
-                    ),
-
-                    _create_fit_evidence(
-                        selection,
-                        threshold,
-                    ),
-
-                    _create_comparison_note(),
-                    comparison_chart,
-                    comparison_key,
-
-                    curve,
-                    curve_key,
-
-                    deviation_result,
-
-                    residual,
-                    residual_key,
-
-                ),
-            )
-        )
-
-    # ------------------------------------------------------------------------
-    # Overview
-    # ------------------------------------------------------------------------
-
-    rejected = mappings[
-        mappings["ideal_function"].isna()
-    ]
-
-    assigned_count = (
-        len(mappings) - len(rejected)
+    assigned_points = int(
+        mappings[
+            "ideal_function"
+        ].notna().sum()
     )
 
-    overview = figure(
-        title="Test-point assignments",
-        x_axis_label="x",
-        y_axis_label="y",
-        width=PLOT_WIDTH,
-        height=OVERVIEW_HEIGHT,
-        tools="pan,wheel_zoom,box_zoom,reset",
-        toolbar_location="above",
+    unassigned_points = (
+        total_points
+        - assigned_points
     )
 
-    _style_plot(overview)
+    # ------------------------------------------------------------------
+    # Create the four independent function plots.
+    # ------------------------------------------------------------------
 
-    overview_legend_items = []
+    function_plots = []
 
-    # ------------------------------------------------------------------------
-    # Assigned test points
-    # ------------------------------------------------------------------------
-
-    for selection_index, selection in enumerate(
+    for index, selection in enumerate(
         selections
     ):
-
-        assigned = mappings[
-            mappings["ideal_function"]
-            == selection.ideal_column
-        ]
-
-        if assigned.empty:
-            continue
-
-        assignment_color = ASSIGNMENT_COLORS[
-            selection_index
-            % len(ASSIGNMENT_COLORS)
-        ]
-
-        source = ColumnDataSource(
-            assigned
-        )
-
-        renderer = overview.scatter(
-            "x",
-            "y",
-            source=source,
-            size=9,
-            alpha=0.88,
-            color=assignment_color,
-            marker="diamond",
-        )
-
-        overview.add_tools(
-            HoverTool(
-                renderers=[renderer],
-                tooltips=[
-                    ("x", "@x{0.000}"),
-                    ("y", "@y{0.000}"),
-                    (
-                        "Assigned to",
-                        selection.ideal_column,
-                    ),
-                ],
+        function_plots.append(
+            _create_function_plot(
+                training,
+                ideal,
+                mappings,
+                selection,
+                index,
             )
         )
 
-        overview_legend_items.append(
-            (
-                assignment_color,
-                (
-                    f"{selection.training_column}"
-                    f" → "
-                    f"{selection.ideal_column}"
-                ),
-                "diamond",
-            )
+    # ------------------------------------------------------------------
+    # Arrange plots manually.
+    #
+    # We intentionally do NOT use gridplot(..., spacing=...).
+    # A manual row/column layout gives us predictable spacing and
+    # avoids Bokeh-version compatibility issues.
+    # ------------------------------------------------------------------
+
+    if len(function_plots) >= 4:
+
+        top_row = row(
+            function_plots[0],
+            function_plots[1],
+            sizing_mode="stretch_width",
         )
 
-    # ------------------------------------------------------------------------
-    # Unassigned test points
-    # ------------------------------------------------------------------------
-
-    if not rejected.empty:
-
-        rejected_source = ColumnDataSource(
-            rejected
+        bottom_row = row(
+            function_plots[2],
+            function_plots[3],
+            sizing_mode="stretch_width",
         )
 
-        rejected_renderer = overview.scatter(
-            "x",
-            "y",
-            source=rejected_source,
-            size=11,
-            color=COLORS["rejected"],
-            marker="x",
-            line_width=2,
-            alpha=0.9,
+        function_dashboard = column(
+            top_row,
+            Spacer(height=55),
+            bottom_row,
+            sizing_mode="stretch_width",
         )
 
-        overview.add_tools(
-            HoverTool(
-                renderers=[
-                    rejected_renderer
-                ],
-                tooltips=[
-                    ("x", "@x{0.000}"),
-                    ("y", "@y{0.000}"),
-                    (
-                        "Status",
-                        "Not assigned",
-                    ),
-                ],
-            )
+    elif len(function_plots) == 3:
+
+        top_row = row(
+            function_plots[0],
+            function_plots[1],
+            sizing_mode="stretch_width",
         )
 
-        overview_legend_items.append(
-            (
-                COLORS["rejected"],
-                "Not assigned",
-                "cross",
-            )
+        bottom_row = row(
+            function_plots[2],
+            sizing_mode="stretch_width",
         )
 
-    overview_key = _create_plot_key(
-        overview_legend_items
+        function_dashboard = column(
+            top_row,
+            Spacer(height=55),
+            bottom_row,
+            sizing_mode="stretch_width",
+        )
+
+    else:
+
+        function_dashboard = column(
+            *function_plots,
+            sizing_mode="stretch_width",
+        )
+
+    # ------------------------------------------------------------------
+    # Prediction plot.
+    # ------------------------------------------------------------------
+
+    prediction_plot = _create_prediction_plot(
+        mappings,
+        ideal,
+        selections,
     )
 
-    # ------------------------------------------------------------------------
-    # Overview explanation
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Complete Bokeh dashboard.
+    # ------------------------------------------------------------------
 
-    overview_explanation = Div(
-        text=f"""
-        <div style="
-            font-family:Arial, sans-serif;
-            background:{COLORS["surface"]};
-            border:1px solid {COLORS["border"]};
-            border-radius:9px;
-            padding:14px 18px;
-            margin-top:16px;
-        ">
+    dashboard = column(
+        function_dashboard,
+        Spacer(height=65),
+        prediction_plot,
+        sizing_mode="stretch_width",
+    )
 
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                text-transform:uppercase;
-                letter-spacing:0.7px;
-                color:{COLORS["ink"]};
-                margin-bottom:6px;
-            ">
-                Reading the overview
-            </div>
+    dashboard_html = file_html(
+        dashboard,
+        CDN,
+        "Ideal Function Analysis",
+    )
 
-            <div style="
-                font-size:13px;
-                line-height:1.6;
-                color:{COLORS["muted"]};
-            ">
-                Each color represents one training-to-ideal-function
-                assignment. Diamond markers are assigned test points;
-                grey crosses are points that could not be assigned.
-                Hover over a point to see its coordinates and assignment.
+    # Extract Bokeh body.
+    body_start = dashboard_html.find(
+        "<body>"
+    )
+
+    body_end = dashboard_html.find(
+        "</body>"
+    )
+
+    if (
+        body_start != -1
+        and body_end != -1
+    ):
+        bokeh_body = dashboard_html[
+            body_start + len("<body>"):
+            body_end
+        ]
+    else:
+        bokeh_body = dashboard_html
+
+    # Extract Bokeh head content.
+    head_content = ""
+
+    if "<head>" in dashboard_html:
+        head_content = (
+            dashboard_html
+            .split(
+                "<head>",
+                1,
+            )[1]
+            .split(
+                "</head>",
+                1,
+            )[0]
+        )
+
+    # ------------------------------------------------------------------
+    # Modern page styling.
+    # ------------------------------------------------------------------
+
+    style = """
+    <style>
+
+        :root {
+            --background: #f5f7fa;
+            --card: #ffffff;
+            --text: #1f2937;
+            --muted: #64748b;
+            --border: #e5e7eb;
+            --green: #16a34a;
+            --red: #dc2626;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            background: var(--background);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--background);
+            color: var(--text);
+            font-family:
+                Inter,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+        }
+
+        .page {
+            width: min(
+                1550px,
+                calc(100% - 56px)
+            );
+
+            margin: 0 auto;
+
+            padding:
+                48px
+                0
+                70px;
+        }
+
+        .header {
+            margin-bottom: 34px;
+        }
+
+        .eyebrow {
+            margin-bottom: 10px;
+
+            font-size: 12px;
+            font-weight: 700;
+
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+
+            color: #64748b;
+        }
+
+        h1 {
+            margin: 0;
+
+            font-size: 36px;
+            line-height: 1.15;
+
+            letter-spacing: -0.025em;
+
+            color: var(--text);
+        }
+
+        .subtitle {
+            max-width: 900px;
+
+            margin-top: 13px;
+
+            font-size: 15px;
+            line-height: 1.65;
+
+            color: var(--muted);
+        }
+
+        .summary-grid {
+            display: grid;
+
+            grid-template-columns:
+                repeat(
+                    4,
+                    minmax(0, 1fr)
+                );
+
+            gap: 16px;
+
+            margin-bottom: 38px;
+        }
+
+        .metric-card {
+            min-height: 145px;
+
+            padding: 22px;
+
+            background: var(--card);
+
+            border:
+                1px solid
+                var(--border);
+
+            border-radius: 14px;
+
+            box-shadow:
+                0 2px 8px
+                rgba(
+                    15,
+                    23,
+                    42,
+                    0.04
+                );
+        }
+
+        .metric-label {
+            margin-bottom: 10px;
+
+            font-size: 12px;
+            font-weight: 700;
+
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+
+            color: #64748b;
+        }
+
+        .metric-value {
+            font-size: 30px;
+            font-weight: 750;
+            line-height: 1;
+
+            color: var(--text);
+        }
+
+        .metric-description {
+            margin-top: 10px;
+
+            font-size: 12px;
+            line-height: 1.45;
+
+            color: var(--muted);
+        }
+
+        .assigned-card {
+            border-top:
+                3px solid
+                var(--green);
+        }
+
+        .unassigned-card {
+            border-top:
+                3px solid
+                var(--red);
+        }
+
+        .function-list {
+            display: flex;
+
+            flex-direction: column;
+
+            gap: 7px;
+        }
+
+        .function-item {
+            display: flex;
+
+            align-items: center;
+
+            gap: 7px;
+
+            font-size: 14px;
+        }
+
+        .function-training {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .function-arrow {
+            color: #94a3b8;
+        }
+
+        .function-ideal {
+            font-weight: 700;
+            color: #2563eb;
+        }
+
+        .section {
+            margin-bottom: 38px;
+        }
+
+        .section-header {
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            margin: 0;
+
+            font-size: 21px;
+            font-weight: 750;
+
+            letter-spacing: -0.01em;
+        }
+
+        .section-description {
+            max-width: 950px;
+
+            margin-top: 7px;
+
+            font-size: 13px;
+            line-height: 1.6;
+
+            color: var(--muted);
+        }
+
+        .plot-card {
+            padding: 22px;
+
+            background: var(--card);
+
+            border:
+                1px solid
+                var(--border);
+
+            border-radius: 16px;
+
+            box-shadow:
+                0 2px 10px
+                rgba(
+                    15,
+                    23,
+                    42,
+                    0.04
+                );
+        }
+
+        .methodology {
+            margin-top: 40px;
+
+            padding:
+                25px
+                28px;
+
+            background: #eef2ff;
+
+            border:
+                1px solid
+                #dbeafe;
+
+            border-radius: 14px;
+        }
+
+        .methodology h2 {
+            margin:
+                0
+                0
+                9px;
+
+            font-size: 17px;
+        }
+
+        .methodology p {
+            max-width: 1050px;
+
+            margin: 0;
+
+            font-size: 13px;
+            line-height: 1.75;
+
+            color: #475569;
+        }
+
+        .footer {
+            margin-top: 35px;
+
+            padding-top: 20px;
+
+            border-top:
+                1px solid
+                var(--border);
+
+            font-size: 11px;
+            line-height: 1.6;
+
+            color: #94a3b8;
+        }
+
+        @media (
+            max-width: 1100px
+        ) {
+
+            .summary-grid {
+                grid-template-columns:
+                    repeat(
+                        2,
+                        minmax(0, 1fr)
+                    );
+            }
+
+        }
+
+        @media (
+            max-width: 800px
+        ) {
+
+            .page {
+                width:
+                    calc(100% - 28px);
+
+                padding-top: 30px;
+            }
+
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 29px;
+            }
+
+        }
+
+    </style>
+    """
+
+    # ------------------------------------------------------------------
+    # Header.
+    # ------------------------------------------------------------------
+
+    header = """
+    <div class="header">
+
+        <div class="eyebrow">
+            Numerical Analysis · Ideal Function Selection
+        </div>
+
+        <h1>
+            Ideal Function Mapping Analysis
+        </h1>
+
+        <div class="subtitle">
+            Comparison of the selected ideal functions with their
+            corresponding training data and the observed test data.
+            Test observations are classified according to the
+            maximum permitted deviation defined by the selection
+            procedure.
+        </div>
+
+    </div>
+    """
+
+    # ------------------------------------------------------------------
+    # Function section.
+    # ------------------------------------------------------------------
+
+    function_section = """
+    <div class="section">
+
+        <div class="section-header">
+
+            <h2 class="section-title">
+                Selected ideal functions and test observations
+            </h2>
+
+            <div class="section-description">
+                Each diagram represents one independent training-to-ideal
+                function assignment. The blue, purple, teal, and orange
+                curves therefore represent four different ideal functions.
+                Training observations are shown as grey points. Green
+                test observations satisfy the deviation criterion, while
+                red observations remain unassigned. The dashed lines
+                indicate the permitted deviation around the selected
+                ideal function.
             </div>
 
         </div>
-        """,
-        width=PLOT_WIDTH,
+
+        <div class="plot-card">
+            __FUNCTION_DASHBOARD__
+        </div>
+
+    </div>
+    """
+
+    function_section = function_section.replace(
+        "__FUNCTION_DASHBOARD__",
+        bokeh_body,
     )
 
-    overview_panel = TabPanel(
-        title="Overview",
-        child=column(
-            _create_method_note(),
-            overview,
-            overview_key,
-            overview_explanation,
-        ),
+    # ------------------------------------------------------------------
+    # Prediction section.
+    # ------------------------------------------------------------------
+
+    prediction_explanation = """
+    <div class="section">
+
+        <div class="section-header">
+
+            <h2 class="section-title">
+                Predicted versus actual values
+            </h2>
+
+            <div class="section-description">
+                This diagram evaluates the quality of the mapping for
+                assigned test observations. Each point represents one
+                assigned test observation. Its horizontal position is
+                the value predicted by the selected ideal function,
+                while its vertical position is the actual observed
+                test value. A point on the dashed diagonal represents
+                a perfect prediction. The closer a point is to the
+                diagonal, the smaller its prediction error.
+            </div>
+
+        </div>
+
+        <!-- The prediction plot is already contained in the Bokeh
+             dashboard above. This explanatory section is intentionally
+             kept separate for readability. -->
+
+    </div>
+    """
+
+    # ------------------------------------------------------------------
+    # Methodology.
+    # ------------------------------------------------------------------
+
+    methodology = """
+    <div class="methodology">
+
+        <h2>
+            Interpretation of the mapping criterion
+        </h2>
+
+        <p>
+            For each training function, the ideal function with the
+            smallest sum of squared errors is selected. For a selected
+            ideal function, a test observation is assigned when its
+            absolute deviation from the corresponding ideal-function
+            value does not exceed √2 times the maximum deviation
+            observed between that ideal function and its associated
+            training function. Observations exceeding this threshold
+            remain unassigned.
+        </p>
+
+    </div>
+    """
+
+    # ------------------------------------------------------------------
+    # Footer.
+    # ------------------------------------------------------------------
+
+    footer = """
+    <div class="footer">
+
+        Interactive visualization generated from the supplied
+        training, ideal, and test datasets. Hover over observations
+        to inspect their numerical values and deviations.
+
+    </div>
+    """
+
+    # ------------------------------------------------------------------
+    # Final HTML.
+    # ------------------------------------------------------------------
+
+    complete_page = f"""
+    <!DOCTYPE html>
+
+    <html lang="en">
+
+    <head>
+
+        <meta charset="utf-8">
+
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+        >
+
+        <title>
+            Ideal Function Analysis
+        </title>
+
+        {style}
+
+        {head_content}
+
+    </head>
+
+    <body>
+
+        <main class="page">
+
+            {header}
+
+            {_create_summary_card(
+                total_points,
+                assigned_points,
+                unassigned_points,
+                selections,
+            )}
+
+            {function_section}
+
+            {prediction_explanation}
+
+            {methodology}
+
+            {footer}
+
+        </main>
+
+    </body>
+
+    </html>
+    """
+
+    output_path.write_text(
+        complete_page,
+        encoding="utf-8",
     )
-
-    # ------------------------------------------------------------------------
-    # Final dashboard
-    # ------------------------------------------------------------------------
-
-    dashboard = column(
-        _create_header(
-            assigned_count=assigned_count,
-            rejected_count=len(rejected),
-            function_count=len(selections),
-        ),
-
-        Tabs(
-            tabs=[
-                overview_panel,
-                *panels,
-            ],
-        ),
-    )
-
-    save(dashboard)
