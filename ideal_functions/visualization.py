@@ -21,6 +21,8 @@ from bokeh.models import (
 from bokeh.plotting import figure
 from bokeh.resources import CDN
 
+from .constants import X_DECIMALS
+
 # ============================================================================
 # Design
 # ============================================================================
@@ -55,7 +57,7 @@ def _prepare_indexed_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """
     result = frame.copy()
 
-    result["x"] = pd.to_numeric(result["x"], errors="coerce").astype(float).round(9)
+    result["x"] = (pd.to_numeric(result["x"], errors="coerce").astype(float).round(X_DECIMALS))
 
     result = result.dropna(subset=["x"])
 
@@ -148,7 +150,7 @@ def _selected_test_points(
 
     result = mappings.copy()
 
-    result["x"] = pd.to_numeric(result["x"], errors="coerce").astype(float).round(9)
+    result["x"] = (pd.to_numeric(result["x"], errors="coerce").astype(float).round(X_DECIMALS))
 
     result["y"] = pd.to_numeric(result["y"], errors="coerce")
 
@@ -237,7 +239,7 @@ def _create_function_plot(
 
     if not unassigned.empty:
         unassigned["x"] = (
-            pd.to_numeric(unassigned["x"], errors="coerce").astype(float).round(9)
+            pd.to_numeric(unassigned["x"], errors="coerce").astype(float).round(X_DECIMALS)
         )
 
         unassigned["y"] = pd.to_numeric(unassigned["y"], errors="coerce")

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from ideal_functions.analysis import IdealFunctionSelector
+from ideal_functions.constants import X_DECIMALS
 from ideal_functions.datasets import (
     IdealDataSet,
     TestDataSet,
@@ -600,7 +601,7 @@ class AnalysisTests(unittest.TestCase):
         print("\nTest points:")
 
         for row in test.itertuples(index=False):
-            x = round(float(row.x), 9)
+            x = round(float(row.x), X_DECIMALS)
             y = float(row.y)
 
             candidates = []
