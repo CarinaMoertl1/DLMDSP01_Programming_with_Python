@@ -7,18 +7,15 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
+from .constants import X_DECIMALS
 from .exceptions import DataConsistencyError
 
 MAPPING_FACTOR = np.sqrt(2)
 
-# Round x values before using them as lookup keys.
-# This prevents small floating-point differences between the
-# training, ideal, and test CSV data from causing lookup errors.
-X_DECIMALS = 9
-
 # Number of closest competing candidates recorded per selection.
 # These candidates help explain why an ideal function was chosen.
 ALTERNATIVES_RECORDED = 6
+
 
 @dataclass(frozen=True)
 class CandidateScore:
@@ -49,9 +46,11 @@ class IdealFunctionSelector:
         """Prepare training and ideal data for comparison."""
         self.training = training.set_index("x").sort_index()
         self.training.index = self.training.index.round(X_DECIMALS)
+        self._check_no_rounding_collisions(self.training.index, "training")
 
         self.ideal = ideal.set_index("x").sort_index()
         self.ideal.index = self.ideal.index.round(X_DECIMALS)
+        self._check_no_rounding_collisions(self.ideal.index, "ideal")
 
         if not self.training.index.isin(self.ideal.index).all():
             raise DataConsistencyError(
@@ -59,6 +58,22 @@ class IdealFunctionSelector:
             )
 
         self.selections: list[Selection] = []
+
+    @staticmethod
+    def _check_no_rounding_collisions(index: pd.Index, dataset_name: str) -> None:
+        """Reject x-values that only collide after rounding to X_DECIMALS.
+
+        Duplicate raw x-values are already rejected by dataset schema
+        validation, but that check runs before rounding. Two distinct
+        raw x-values could still coincide once rounded to X_DECIMALS,
+        which would silently create a duplicate index label and could
+        make later ``.loc`` lookups return more rows than expected.
+        """
+        if index.duplicated().any():
+            raise DataConsistencyError(
+                f"Rounding x-values to {X_DECIMALS} decimals introduced "
+                f"duplicate {dataset_name} x labels"
+            )
 
     def select(self) -> list[Selection]:
         """Select distinct ideal functions with minimum total SSE.

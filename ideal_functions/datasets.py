@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
@@ -14,8 +14,19 @@ from .exceptions import DataSchemaError
 class CsvDataSet(ABC):
     """Base class for CSV-backed data sets."""
 
-    required_columns: tuple[str, ...] = ("x",)
     allow_duplicate_x = False
+
+    @property
+    @abstractmethod
+    def required_columns(self) -> tuple[str, ...]:
+        """The column names this dataset must contain.
+
+        Subclasses satisfy this by defining a plain ``required_columns``
+        class attribute; declaring it as an abstract property here is
+        what stops ``CsvDataSet`` itself from being instantiated
+        directly, since it never provides a value for it.
+        """
+        raise NotImplementedError
 
     def __init__(self, path: str | Path) -> None:
         """Load a CSV file and validate its contents."""
