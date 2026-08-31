@@ -1,4 +1,4 @@
-"""Command-line entry point for the application."""
+"""Orchestration logic for the ideal-function selection process."""
 
 from __future__ import annotations
 
